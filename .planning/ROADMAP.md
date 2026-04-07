@@ -88,7 +88,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 1/1 | Complete | 2026-04-07 |
-| 2. Persona System | 0/? | Not started | - |
+| 2. Persona System | 1/1 | Complete | 2026-04-07 |
 | 3. Message Ingestion | 0/? | Not started | - |
 | 4. Reactive Replies | 0/? | Not started | - |
 | 5. Autonomous Messaging and Deployment | 0/? | Not started | - |

@@ -22,9 +22,9 @@
 ### Persona System
 
 - [x] **PERS-01**: Each Telegram group has one Persona record in DB (name, bio, personality, language_style, context_window, auto_message settings)
-- [ ] **PERS-02**: Claude system prompt is constructed from Persona fields for every API call
-- [ ] **PERS-03**: System prompt includes hard instruction to never identify as a bot, deflect/deny if asked directly
-- [ ] **PERS-04**: Seed script creates Group + Persona records with sensible defaults from CLI input (group Telegram ID + title)
+- [x] **PERS-02**: Claude system prompt is constructed from Persona fields for every API call
+- [x] **PERS-03**: System prompt includes hard instruction to never identify as a bot, deflect/deny if asked directly
+- [x] **PERS-04**: Seed script creates Group + Persona records with sensible defaults from CLI input (group Telegram ID + title)
 
 ### Autonomous Messaging
 
@@ -85,9 +85,9 @@
 | REPLY-04 | — | Pending |
 | REPLY-05 | — | Pending |
 | PERS-01 | 1 | Complete |
-| PERS-02 | — | Pending |
-| PERS-03 | — | Pending |
-| PERS-04 | — | Pending |
+| PERS-02 | — | Complete |
+| PERS-03 | — | Complete |
+| PERS-04 | — | Complete |
 | AUTO-01 | — | Pending |
 | AUTO-02 | — | Pending |
 | AUTO-03 | — | Pending |
