@@ -32,11 +32,15 @@ TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 async def post_init(application: Application) -> None:
     """
     Runs inside PTB's event loop after initialize(), before start_polling().
-    This is the correct place for async startup work (DB init, etc.).
+    This is the correct place for async startup work (DB init, scheduler start).
     """
     from bot.database import init_db
+    from bot.scheduler import build_scheduler
     await init_db()
     logger.info("Database initialized — all tables ready")
+    scheduler = build_scheduler(application)
+    scheduler.start()
+    logger.info("Scheduler started — auto-messages active")
 
 
 def main() -> None:
