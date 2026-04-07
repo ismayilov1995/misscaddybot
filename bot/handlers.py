@@ -242,3 +242,67 @@ async def handle_message(
     if is_mentioned(message, context.bot.username, persona.name, context.bot.id):
         logger.info("Mention detected in group %d — spawning reply task", chat_id)
         asyncio.create_task(reply_to_mention(update, context, group, persona))
+
+
+async def handle_bot_added(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    ChatMemberHandler callback — fires when the bot's own membership status changes.
+
+    Registered in main.py for: ChatMemberUpdated where new_chat_member is the bot
+    and new status is 'member' or 'administrator'.
+
+    Auto-seeds Group + Persona so manual seed.py is not required after deploy.
+    Re-adding to an existing group is a no-op (group already in DB).
+    """
+    from bot.database import AsyncSessionLocal
+    from seed import (
+        DEFAULT_NAME, DEFAULT_BIO, DEFAULT_PERSONALITY,
+        DEFAULT_LANGUAGE_STYLE, DEFAULT_AUTO_MESSAGE_ENABLED,
+        DEFAULT_AUTO_MESSAGE_INTERVAL_MIN, DEFAULT_AUTO_MESSAGE_INTERVAL_MAX,
+        DEFAULT_CONTEXT_WINDOW,
+    )
+
+    my_chat_member = update.my_chat_member
+    if my_chat_member is None:
+        return
+
+    new_status = my_chat_member.new_chat_member.status
+    if new_status not in ("member", "administrator"):
+        return
+
+    chat = my_chat_member.chat
+    if chat.type not in ("group", "supergroup"):
+        return
+
+    chat_id = chat.id
+    title = chat.title or "Unknown Group"
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Group).where(Group.telegram_id == chat_id)
+        )
+        if result.scalar_one_or_none() is not None:
+            logger.info("Bot re-added to known group %d — skipping seed", chat_id)
+            return
+
+        group = Group(telegram_id=chat_id, title=title, is_active=True)
+        session.add(group)
+        await session.flush()
+
+        persona = Persona(
+            group_id=group.id,
+            name=DEFAULT_NAME,
+            bio=DEFAULT_BIO,
+            personality=DEFAULT_PERSONALITY,
+            language_style=DEFAULT_LANGUAGE_STYLE,
+            auto_message_enabled=DEFAULT_AUTO_MESSAGE_ENABLED,
+            auto_message_interval_min=DEFAULT_AUTO_MESSAGE_INTERVAL_MIN,
+            auto_message_interval_max=DEFAULT_AUTO_MESSAGE_INTERVAL_MAX,
+            context_window=DEFAULT_CONTEXT_WINDOW,
+        )
+        session.add(persona)
+        await session.commit()
+
+    logger.info("Auto-seeded group '%s' (%d) with persona '%s'", title, chat_id, DEFAULT_NAME)

@@ -18,7 +18,7 @@ for var in REQUIRED_VARS:
         sys.exit(f"ERROR: {var} is not set in .env")
 
 # Project imports come AFTER load_dotenv() and env validation.
-from telegram.ext import Application, MessageHandler, filters  # noqa: E402
+from telegram.ext import Application, ChatMemberHandler, MessageHandler, filters  # noqa: E402
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -47,11 +47,12 @@ def main() -> None:
         .build()
     )
 
-    from bot.handlers import handle_message
+    from bot.handlers import handle_message, handle_bot_added
+    app.add_handler(ChatMemberHandler(handle_bot_added, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_message))
 
     logger.info("Starting bot...")
-    app.run_polling(allowed_updates=["message"])
+    app.run_polling(allowed_updates=["message", "my_chat_member"])
 
 
 if __name__ == "__main__":
