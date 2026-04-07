@@ -65,7 +65,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Claude API calls use `cache_control: {"type": "ephemeral"}` on the system prompt block — confirmed via Anthropic console cache hit rate
   5. Claude API errors (rate limit, timeout, connection error) are caught silently — the bot does not crash and the group sees no error message
   6. Model is loaded from environment/config (defaults to `claude-haiku-4-5-20251001`) — swappable without code changes
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 4-PLAN.md — Implement get_context_messages, reply_to_mention, update handle_message to spawn reply task
 **UI hint**: no
 
 ### Phase 5: Autonomous Messaging and Deployment
@@ -90,5 +92,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Foundation | 1/1 | Complete | 2026-04-07 |
 | 2. Persona System | 1/1 | Complete | 2026-04-07 |
 | 3. Message Ingestion | 0/? | Not started | - |
-| 4. Reactive Replies | 0/? | Not started | - |
+| 4. Reactive Replies | 0/1 | Not started | - |
 | 5. Autonomous Messaging and Deployment | 0/? | Not started | - |
