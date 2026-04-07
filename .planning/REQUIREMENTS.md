@@ -21,7 +21,7 @@
 
 ### Persona System
 
-- [ ] **PERS-01**: Each Telegram group has one Persona record in DB (name, bio, personality, language_style, context_window, auto_message settings)
+- [x] **PERS-01**: Each Telegram group has one Persona record in DB (name, bio, personality, language_style, context_window, auto_message settings)
 - [ ] **PERS-02**: Claude system prompt is constructed from Persona fields for every API call
 - [ ] **PERS-03**: System prompt includes hard instruction to never identify as a bot, deflect/deny if asked directly
 - [ ] **PERS-04**: Seed script creates Group + Persona records with sensible defaults from CLI input (group Telegram ID + title)
@@ -41,8 +41,8 @@
 ### Deployment
 
 - [ ] **DEPLOY-01**: Bot runs as a systemd service on Ubuntu 24.04 with `Restart=on-failure` and `RestartSec=10`
-- [ ] **DEPLOY-02**: All secrets (Telegram token, Anthropic key, DB URL) are loaded from `.env` file via python-dotenv
-- [ ] **DEPLOY-03**: Database schema is initialized via SQLAlchemy `create_all()` on startup (Alembic migrations added as follow-up)
+- [x] **DEPLOY-02**: All secrets (Telegram token, Anthropic key, DB URL) are loaded from `.env` file via python-dotenv
+- [x] **DEPLOY-03**: Database schema is initialized via SQLAlchemy `create_all()` on startup (Alembic migrations added as follow-up)
 
 ## v2 Requirements
 
@@ -84,7 +84,7 @@
 | REPLY-03 | — | Pending |
 | REPLY-04 | — | Pending |
 | REPLY-05 | — | Pending |
-| PERS-01 | — | Pending |
+| PERS-01 | 1 | Complete |
 | PERS-02 | — | Pending |
 | PERS-03 | — | Pending |
 | PERS-04 | — | Pending |
@@ -95,8 +95,8 @@
 | AI-02 | — | Pending |
 | AI-03 | — | Pending |
 | DEPLOY-01 | — | Pending |
-| DEPLOY-02 | — | Pending |
-| DEPLOY-03 | — | Pending |
+| DEPLOY-02 | 1 | Complete |
+| DEPLOY-03 | 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 21 total
