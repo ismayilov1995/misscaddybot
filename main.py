@@ -1,0 +1,58 @@
+# main.py
+import logging
+import os
+import sys
+
+from dotenv import load_dotenv
+
+# load_dotenv() MUST come before any project imports.
+# bot/database.py reads os.environ["DATABASE_URL"] at module level.
+# If this line comes after the import, DATABASE_URL won't be set yet → KeyError.
+load_dotenv()
+
+# Validate all required vars before any initialization.
+# Explicit naming makes misconfigured deployments easy to diagnose.
+REQUIRED_VARS = ["TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "DATABASE_URL", "BOT_USERNAME"]
+for var in REQUIRED_VARS:
+    if not os.getenv(var):
+        sys.exit(f"ERROR: {var} is not set in .env")
+
+# Project imports come AFTER load_dotenv() and env validation.
+from telegram.ext import Application  # noqa: E402
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+
+
+async def post_init(application: Application) -> None:
+    """
+    Runs inside PTB's event loop after initialize(), before start_polling().
+    This is the correct place for async startup work (DB init, etc.).
+    """
+    from bot.database import init_db
+    await init_db()
+    logger.info("Database initialized — all tables ready")
+
+
+def main() -> None:
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .build()
+    )
+
+    # Handlers are registered here in Phase 3.
+    # Phase 1: no handlers. Bot connects and receives no events.
+
+    logger.info("Starting bot...")
+    app.run_polling(allowed_updates=["message"])
+
+
+if __name__ == "__main__":
+    main()
