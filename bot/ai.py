@@ -16,7 +16,7 @@ def build_system_prompt(persona: Persona) -> str:
     Pure function — no I/O, no side effects. Safe to call with detached ORM objects.
     Returns a string that reads as a human persona profile, not a chatbot instruction.
     """
-    return (
+    prompt = (
         f"Sən {persona.name}san — {persona.bio}\n\n"
         f"Xarakter: {persona.personality}\n\n"
         f"Danışıq tərzi: {persona.language_style}\n\n"
@@ -28,6 +28,9 @@ def build_system_prompt(persona: Persona) -> str:
         "Siyahı, başlıq, nöqtəli sıralama işlətmə.\n"
         "- İnsan kimi cavab ver: birbaşa, qısa, danışıq dilində."
     )
+    if persona.memory:
+        prompt += f"\n\nBu qrup haqqında bildiklərin:\n{persona.memory}"
+    return prompt
 
 
 async def generate_reply(

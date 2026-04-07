@@ -36,6 +36,7 @@ class Persona(Base):
     auto_message_interval_min: Mapped[int] = mapped_column(Integer, default=45, nullable=False)
     auto_message_interval_max: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
     context_window: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    memory: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
@@ -56,6 +57,6 @@ class Message(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     is_bot: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     replied_to_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     group: Mapped["Group"] = relationship("Group", back_populates="messages")

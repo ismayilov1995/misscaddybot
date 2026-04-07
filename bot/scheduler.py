@@ -71,6 +71,83 @@ async def send_auto_message(application) -> None:
             logger.warning("Auto-message failed for group %d: %s", group.telegram_id, e)
 
 
+async def update_group_memory(application) -> None:
+    """
+    APScheduler job — runs every 24 hours.
+
+    For each active group, fetches the last 100 messages, sends them to Claude
+    and asks it to write short observations about the group (inside jokes,
+    recurring topics, who's who, group vibe). Saves the result to persona.memory.
+
+    This memory is then injected into the system prompt on every reply,
+    allowing the bot's character to evolve and adapt to the group over time.
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.handlers import get_context_messages
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy.orm import selectinload
+        result = await session.execute(
+            select(Group)
+            .options(selectinload(Group.persona))
+            .where(Group.is_active == True)  # noqa: E712
+        )
+        groups = result.scalars().all()
+
+    for group in groups:
+        persona = group.persona
+        if persona is None:
+            continue
+
+        try:
+            async with AsyncSessionLocal() as session:
+                messages = await get_context_messages(session, group.id, limit=100)
+
+            if len(messages) < 10:
+                logger.info("Group %d has < 10 messages — skipping memory update", group.telegram_id)
+                continue
+
+            # Format messages as plain text for the reflection prompt
+            convo = "\n".join(
+                f"{'Bot' if m['role'] == 'assistant' else 'İnsan'}: {m['content']}"
+                for m in messages
+            )
+
+            reflection_prompt = (
+                "Aşağıda bir Telegram qrupunun söhbət tarixçəsi var. "
+                "Sən bu qrupun üzvüsən və bu söhbəti oxuyursan.\n\n"
+                f"{convo}\n\n"
+                "Bu söhbətə əsaslanaraq qrup haqqında 3-5 cümlə ilə qeyd yaz: "
+                "kim kimdir, nə mövzular çıxır, hansı inside joke-lar var, qrupun ümumi havası necədir. "
+                "Şəxsi qeyd kimi yaz, sanki öz notlarındır."
+            )
+
+            import anthropic
+            import os
+            client = anthropic.AsyncAnthropic()
+            response = await client.messages.create(
+                model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+                max_tokens=300,
+                messages=[{"role": "user", "content": reflection_prompt}],
+            )
+            new_memory = response.content[0].text.strip()
+
+            async with AsyncSessionLocal() as session:
+                from sqlalchemy import select as sa_select
+                result = await session.execute(
+                    sa_select(Persona).where(Persona.group_id == group.id)
+                )
+                p = result.scalar_one_or_none()
+                if p:
+                    p.memory = new_memory
+                    await session.commit()
+
+            logger.info("Memory updated for group %d", group.telegram_id)
+
+        except Exception as e:
+            logger.warning("Memory update failed for group %d: %s", group.telegram_id, e)
+
+
 def build_scheduler(application) -> AsyncIOScheduler:
     """
     Create and configure the AsyncIOScheduler.
@@ -96,6 +173,16 @@ def build_scheduler(application) -> AsyncIOScheduler:
         args=[application],
         id="auto_message",
         name="Auto message job",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        update_group_memory,
+        trigger="interval",
+        hours=24,
+        args=[application],
+        id="update_memory",
+        name="Group memory update",
         replace_existing=True,
     )
 

@@ -20,7 +20,7 @@ def test_persona_columns_exist():
     assert cols == {
         "id", "group_id", "name", "bio", "personality", "language_style",
         "auto_message_enabled", "auto_message_interval_min", "auto_message_interval_max",
-        "context_window", "created_at", "updated_at",
+        "context_window", "memory", "created_at", "updated_at",
     }
 
 
