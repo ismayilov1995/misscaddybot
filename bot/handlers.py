@@ -1,10 +1,12 @@
 # bot/handlers.py
+import asyncio
 import logging
+import random
 from datetime import datetime
 
 import telegram
 from telegram import Update
-from telegram.constants import MessageEntityType
+from telegram.constants import ChatAction, MessageEntityType
 from telegram.ext import ContextTypes
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,6 +109,85 @@ def is_mentioned(
     return False
 
 
+async def get_context_messages(
+    session: AsyncSession,
+    group_id: int,
+    limit: int,
+) -> list[dict]:
+    """
+    Fetch the last N messages for a group and return them as Claude message dicts.
+
+    Returns messages in chronological order (oldest first).
+    is_bot=True  → {"role": "assistant", "content": text}
+    is_bot=False → {"role": "user", "content": "{sender_name}: {text}"}
+    """
+    result = await session.execute(
+        select(Message)
+        .where(Message.group_id == group_id)
+        .order_by(Message.sent_at.desc())
+        .limit(limit)
+    )
+    rows = list(reversed(result.scalars().all()))
+    messages = []
+    for row in rows:
+        if row.is_bot:
+            messages.append({"role": "assistant", "content": row.text})
+        else:
+            messages.append({"role": "user", "content": f"{row.sender_name}: {row.text}"})
+    return messages
+
+
+async def reply_to_mention(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    group: Group,
+    persona: Persona,
+) -> None:
+    """
+    Full reactive reply loop — called as a background task when a mention is detected.
+
+    Steps:
+      1. Fetch recent context messages from DB
+      2. Call Claude API via generate_reply
+      3. If None (API error) → return silently, no message sent
+      4. Send typing indicator
+      5. Sleep for realistic human-like delay (base 1–4s + length-scaled)
+      6. Send reply to chat
+      7. Save bot's outgoing message to DB
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.ai import generate_reply
+
+    chat_id = update.effective_message.chat_id
+
+    async with AsyncSessionLocal() as session:
+        context_messages = await get_context_messages(
+            session, group.id, persona.context_window
+        )
+        reply = await generate_reply(persona, context_messages)
+        if reply is None:
+            return
+
+        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        delay = random.uniform(1, 4) + min(len(reply) * 0.04, 8)
+        await asyncio.sleep(delay)
+
+        sent_msg = await context.bot.send_message(chat_id=chat_id, text=reply)
+
+        await save_message(
+            session,
+            group_id=group.id,
+            telegram_message_id=sent_msg.message_id,
+            sender_id=context.bot.id,
+            sender_name=persona.name,
+            sender_username=context.bot.username,
+            text=reply,
+            is_bot=True,
+            replied_to_id=None,
+            sent_at=sent_msg.date,
+        )
+
+
 async def handle_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -159,6 +240,5 @@ async def handle_message(
         )
 
     if is_mentioned(message, context.bot.username, persona.name, context.bot.id):
-        logger.info(
-            "Mention detected in group %d — queuing reply (Phase 4)", chat_id
-        )
+        logger.info("Mention detected in group %d — spawning reply task", chat_id)
+        asyncio.create_task(reply_to_mention(update, context, group, persona))

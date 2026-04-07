@@ -14,7 +14,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from bot.handlers import get_group_with_persona, is_mentioned, save_message, handle_message
+from bot.handlers import (
+    get_group_with_persona, is_mentioned, save_message, handle_message,
+    get_context_messages, reply_to_mention,
+)
 from bot.models import Base, Group, Message, Persona
 from telegram.constants import MessageEntityType
 
@@ -402,3 +405,208 @@ async def test_handle_message_no_mention_no_log(
             await handle_message(update, context)
 
     assert "Mention detected" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# get_context_messages — async DB tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_context_messages_empty(handler_session, make_group_with_persona):
+    """0 messages in DB → returns []."""
+    group, _ = await make_group_with_persona(telegram_id=-2001111111111)
+    async with handler_session() as session:
+        result = await get_context_messages(session, group.id, limit=30)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_context_messages_chronological_order(handler_session, make_group_with_persona):
+    """Messages returned in chronological order (oldest first)."""
+    group, _ = await make_group_with_persona(telegram_id=-2002222222222)
+    t1 = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+    t2 = datetime(2024, 1, 15, 11, 0, 0, tzinfo=timezone.utc)
+    t3 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+    async with handler_session() as session:
+        for i, (text, t) in enumerate([("first", t1), ("second", t2), ("third", t3)]):
+            session.add(Message(
+                group_id=group.id,
+                telegram_message_id=i + 1,
+                sender_id=100,
+                sender_name="User",
+                sender_username=None,
+                text=text,
+                is_bot=False,
+                replied_to_id=None,
+                sent_at=t,
+            ))
+        await session.commit()
+
+    async with handler_session() as session:
+        result = await get_context_messages(session, group.id, limit=30)
+
+    assert len(result) == 3
+    assert result[0]["content"] == "User: first"
+    assert result[1]["content"] == "User: second"
+    assert result[2]["content"] == "User: third"
+
+
+@pytest.mark.asyncio
+async def test_get_context_messages_user_role_format(handler_session, make_group_with_persona):
+    """is_bot=False → role='user', content starts with sender_name + ': '."""
+    group, _ = await make_group_with_persona(telegram_id=-2003333333333)
+    async with handler_session() as session:
+        session.add(Message(
+            group_id=group.id,
+            telegram_message_id=1,
+            sender_id=100,
+            sender_name="Kamran",
+            sender_username=None,
+            text="Salam!",
+            is_bot=False,
+            replied_to_id=None,
+            sent_at=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        ))
+        await session.commit()
+
+    async with handler_session() as session:
+        result = await get_context_messages(session, group.id, limit=30)
+
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
+    assert result[0]["content"] == "Kamran: Salam!"
+
+
+@pytest.mark.asyncio
+async def test_get_context_messages_assistant_role_format(handler_session, make_group_with_persona):
+    """is_bot=True → role='assistant', content equals text with no name prefix."""
+    group, _ = await make_group_with_persona(telegram_id=-2004444444444)
+    async with handler_session() as session:
+        session.add(Message(
+            group_id=group.id,
+            telegram_message_id=1,
+            sender_id=999,
+            sender_name="Nicat",
+            sender_username="misscaddybot",
+            text="Yaxşıyam, siz?",
+            is_bot=True,
+            replied_to_id=None,
+            sent_at=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        ))
+        await session.commit()
+
+    async with handler_session() as session:
+        result = await get_context_messages(session, group.id, limit=30)
+
+    assert len(result) == 1
+    assert result[0]["role"] == "assistant"
+    assert result[0]["content"] == "Yaxşıyam, siz?"
+
+
+@pytest.mark.asyncio
+async def test_get_context_messages_limit(handler_session, make_group_with_persona):
+    """With limit=3 and 5 messages in DB → returns 3 most recent in chronological order."""
+    group, _ = await make_group_with_persona(telegram_id=-2005555555555)
+    async with handler_session() as session:
+        for i in range(5):
+            session.add(Message(
+                group_id=group.id,
+                telegram_message_id=i + 1,
+                sender_id=100,
+                sender_name="User",
+                sender_username=None,
+                text=f"msg{i + 1}",
+                is_bot=False,
+                replied_to_id=None,
+                sent_at=datetime(2024, 1, 15, 12, i, 0, tzinfo=timezone.utc),
+            ))
+        await session.commit()
+
+    async with handler_session() as session:
+        result = await get_context_messages(session, group.id, limit=3)
+
+    assert len(result) == 3
+    # Should be the 3 most recent: msg3, msg4, msg5 in chronological order
+    assert result[0]["content"] == "User: msg3"
+    assert result[1]["content"] == "User: msg4"
+    assert result[2]["content"] == "User: msg5"
+
+
+# ---------------------------------------------------------------------------
+# reply_to_mention — async tests with mocked bot
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_reply_to_mention_none_reply_no_send(handler_session, make_group_with_persona):
+    """When generate_reply returns None, send_message is NOT called."""
+    group, persona = await make_group_with_persona(telegram_id=-3001111111111)
+    update = _make_update(chat_id=-3001111111111, message_id=1, text="Nicat salam")
+    context = _make_context()
+    context.bot.send_message = AsyncMock()
+    context.bot.send_chat_action = AsyncMock()
+
+    with patch("bot.database.AsyncSessionLocal", handler_session):
+        with patch("bot.ai.generate_reply", AsyncMock(return_value=None)):
+            await reply_to_mention(update, context, group, persona)
+
+    context.bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reply_to_mention_sends_and_saves(handler_session, make_group_with_persona):
+    """When generate_reply returns text, send_message is called and reply is saved to DB."""
+    group, persona = await make_group_with_persona(telegram_id=-3002222222222)
+    update = _make_update(chat_id=-3002222222222, message_id=1, text="Nicat salam")
+    context = _make_context()
+
+    sent_msg = MagicMock()
+    sent_msg.message_id = 999
+    sent_msg.date = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    context.bot.send_message = AsyncMock(return_value=sent_msg)
+    context.bot.send_chat_action = AsyncMock()
+
+    with patch("bot.database.AsyncSessionLocal", handler_session):
+        with patch("bot.ai.generate_reply", AsyncMock(return_value="Salam!")):
+            with patch("asyncio.sleep", AsyncMock()):
+                await reply_to_mention(update, context, group, persona)
+
+    context.bot.send_message.assert_called_once_with(chat_id=-3002222222222, text="Salam!")
+
+    async with handler_session() as session:
+        result = await session.execute(
+            select(Message).where(Message.is_bot == True)  # noqa: E712
+        )
+        rows = result.scalars().all()
+    assert len(rows) == 1
+    assert rows[0].text == "Salam!"
+    assert rows[0].is_bot is True
+
+
+@pytest.mark.asyncio
+async def test_reply_to_mention_typing_delay(handler_session, make_group_with_persona):
+    """typing action sent before send_message; sleep called with value >= 1.0."""
+    group, persona = await make_group_with_persona(telegram_id=-3003333333333)
+    update = _make_update(chat_id=-3003333333333, message_id=1, text="Nicat salam")
+    context = _make_context()
+
+    sent_msg = MagicMock()
+    sent_msg.message_id = 1
+    sent_msg.date = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    context.bot.send_message = AsyncMock(return_value=sent_msg)
+    context.bot.send_chat_action = AsyncMock()
+    sleep_mock = AsyncMock()
+
+    with patch("bot.database.AsyncSessionLocal", handler_session):
+        with patch("bot.ai.generate_reply", AsyncMock(return_value="ok")):
+            with patch("asyncio.sleep", sleep_mock):
+                await reply_to_mention(update, context, group, persona)
+
+    from telegram.constants import ChatAction
+    context.bot.send_chat_action.assert_called_once_with(
+        chat_id=-3003333333333, action=ChatAction.TYPING
+    )
+    sleep_mock.assert_called_once()
+    sleep_arg = sleep_mock.call_args[0][0]
+    assert sleep_arg >= 1.0
+    assert sleep_arg <= 13.0
