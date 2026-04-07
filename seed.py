@@ -2,7 +2,10 @@
 """
 Seed script: create a Group and default Persona for a given Telegram group.
 
-Usage:
+Usage (auto-detect from Telegram updates):
+    python seed.py --auto
+
+Usage (manual):
     python seed.py --group-id 123456789 --title "My Group"
 
 Re-running on an existing group-id is a no-op (prints skip message, exits 0).
@@ -22,6 +25,7 @@ if not os.getenv("DATABASE_URL"):
     sys.exit("ERROR: DATABASE_URL is not set in .env")
 
 from sqlalchemy import select  # noqa: E402
+from telegram import Bot  # noqa: E402
 
 from bot.database import AsyncSessionLocal  # noqa: E402
 from bot.models import Group, Persona  # noqa: E402
@@ -47,6 +51,20 @@ DEFAULT_AUTO_MESSAGE_ENABLED = True
 DEFAULT_AUTO_MESSAGE_INTERVAL_MIN = 45
 DEFAULT_AUTO_MESSAGE_INTERVAL_MAX = 180
 DEFAULT_CONTEXT_WINDOW = 30
+
+
+async def auto_detect_group() -> tuple[int, str] | None:
+    """Fetch recent Telegram updates and return the first group chat found."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        sys.exit("ERROR: TELEGRAM_BOT_TOKEN is not set in .env")
+    bot = Bot(token=token)
+    updates = await bot.get_updates(limit=100)
+    for update in updates:
+        msg = update.message or update.edited_message
+        if msg and msg.chat.type in ("group", "supergroup"):
+            return msg.chat.id, msg.chat.title or "Unknown Group"
+    return None
 
 
 async def main(group_id: int, title: str) -> None:
@@ -92,17 +110,21 @@ async def main(group_id: int, title: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Seed a Group and Persona record")
-    parser.add_argument(
-        "--group-id",
-        type=int,
-        required=True,
-        help="Telegram chat ID (bigint)",
-    )
-    parser.add_argument(
-        "--title",
-        type=str,
-        required=True,
-        help="Human-readable group title",
-    )
+    parser.add_argument("--auto", action="store_true", help="Auto-detect group from Telegram updates")
+    parser.add_argument("--group-id", type=int, help="Telegram chat ID (bigint)")
+    parser.add_argument("--title", type=str, help="Human-readable group title")
     args = parser.parse_args()
-    asyncio.run(main(args.group_id, args.title))
+
+    if args.auto:
+        async def run_auto():
+            result = await auto_detect_group()
+            if result is None:
+                sys.exit("No group found. Make sure the bot is in a group and someone sent a message.")
+            group_id, title = result
+            print(f"Found group: '{title}' (id={group_id})")
+            await main(group_id, title)
+        asyncio.run(run_auto())
+    else:
+        if not args.group_id or not args.title:
+            sys.exit("ERROR: Provide --auto, or both --group-id and --title")
+        asyncio.run(main(args.group_id, args.title))
