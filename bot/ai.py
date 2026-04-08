@@ -2,19 +2,18 @@
 import logging
 import os
 
-import anthropic
-
 from bot.models import Persona
 
 logger = logging.getLogger(__name__)
 
+_AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").lower()  # "openai" or "anthropic"
+
 
 def build_system_prompt(persona: Persona) -> str:
     """
-    Build the Claude system prompt from a Persona record.
+    Build the system prompt from a Persona record.
 
     Pure function — no I/O, no side effects. Safe to call with detached ORM objects.
-    Returns a string that reads as a human persona profile, not a chatbot instruction.
     """
     prompt = (
         f"Sən {persona.name}san. {persona.bio}\n\n"
@@ -37,26 +36,75 @@ async def generate_reply(
     context_messages: list[dict],
 ) -> str | None:
     """
-    Call Claude API and return the reply text, or None on recoverable API error.
+    Call the configured AI provider and return the reply text, or None on recoverable error.
 
-    context_messages format:
-        [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
-
-    Returns None (does not raise) on RateLimitError, APIConnectionError, APIStatusError.
-    Unexpected errors propagate — do not catch bare Exception here.
+    Provider is selected by AI_PROVIDER env var ("openai" or "anthropic", default: "openai").
+    Model is selected by AI_MODEL env var.
     """
+    if _AI_PROVIDER == "anthropic":
+        return await _generate_anthropic(persona, context_messages)
+    return await _generate_openai(persona, context_messages)
+
+
+async def _generate_openai(
+    persona: Persona,
+    context_messages: list[dict],
+) -> str | None:
+    """OpenAI (ChatGPT) backend. Reads OPENAI_API_KEY from env."""
+    try:
+        import openai
+    except ImportError:
+        logger.error("openai package not installed — run: pip install openai")
+        return None
+
     system_prompt = build_system_prompt(persona)
-    client = anthropic.AsyncAnthropic()  # reads ANTHROPIC_API_KEY from env automatically
+    model = os.getenv("AI_MODEL", "gpt-4o-mini")
+    client = openai.AsyncOpenAI()  # reads OPENAI_API_KEY automatically
+
+    messages = [{"role": "system", "content": system_prompt}] + context_messages
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            max_tokens=150,
+            messages=messages,
+        )
+        return response.choices[0].message.content
+    except openai.RateLimitError:
+        logger.warning("OpenAI rate limit hit — skipping reply")
+        return None
+    except openai.APIConnectionError:
+        logger.warning("OpenAI connection error — skipping reply")
+        return None
+    except openai.APIStatusError as e:
+        logger.warning("OpenAI API status error %s — skipping reply", e.status_code)
+        return None
+
+
+async def _generate_anthropic(
+    persona: Persona,
+    context_messages: list[dict],
+) -> str | None:
+    """Anthropic (Claude) backend. Reads ANTHROPIC_API_KEY from env."""
+    try:
+        import anthropic
+    except ImportError:
+        logger.error("anthropic package not installed — run: pip install anthropic")
+        return None
+
+    system_prompt = build_system_prompt(persona)
+    model = os.getenv("AI_MODEL", "claude-haiku-4-5-20251001")
+    client = anthropic.AsyncAnthropic()  # reads ANTHROPIC_API_KEY automatically
 
     try:
         response = await client.messages.create(
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            model=model,
             max_tokens=150,
             system=[
                 {
                     "type": "text",
                     "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
+                    "cache_control": {"type": "ephemeral"},  # prompt caching — reduces cost
                 }
             ],
             messages=context_messages,
