@@ -6,7 +6,7 @@ from bot.models import Persona
 
 logger = logging.getLogger(__name__)
 
-_AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").lower()  # "openai" or "anthropic"
+_AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").lower()  # "openai", "anthropic", or "grok"
 
 
 def build_system_prompt(persona: Persona) -> str:
@@ -43,6 +43,8 @@ async def generate_reply(
     """
     if _AI_PROVIDER == "anthropic":
         return await _generate_anthropic(persona, context_messages)
+    if _AI_PROVIDER == "grok":
+        return await _generate_grok(persona, context_messages)
     return await _generate_openai(persona, context_messages)
 
 
@@ -78,6 +80,44 @@ async def _generate_openai(
         return None
     except openai.APIStatusError as e:
         logger.warning("OpenAI API status error %s — skipping reply", e.status_code)
+        return None
+
+
+async def _generate_grok(
+    persona: Persona,
+    context_messages: list[dict],
+) -> str | None:
+    """xAI Grok backend. Reads XAI_API_KEY from env. Uses OpenAI-compatible API."""
+    try:
+        import openai
+    except ImportError:
+        logger.error("openai package not installed — run: pip install openai")
+        return None
+
+    system_prompt = build_system_prompt(persona)
+    model = os.getenv("AI_MODEL", "grok-3-mini")
+    client = openai.AsyncOpenAI(
+        api_key=os.getenv("XAI_API_KEY"),
+        base_url="https://api.x.ai/v1",
+    )
+
+    messages = [{"role": "system", "content": system_prompt}] + context_messages
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            max_tokens=150,
+            messages=messages,
+        )
+        return response.choices[0].message.content
+    except openai.RateLimitError:
+        logger.warning("Grok rate limit hit — skipping reply")
+        return None
+    except openai.APIConnectionError:
+        logger.warning("Grok connection error — skipping reply")
+        return None
+    except openai.APIStatusError as e:
+        logger.warning("Grok API status error %s — skipping reply", e.status_code)
         return None
 
 
