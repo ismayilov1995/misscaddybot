@@ -139,13 +139,23 @@ async def _extract_facts_via_ai(context_messages: list[dict]) -> list[str]:
     return facts[:10]
 
 
+def _memory_model() -> str:
+    """Model used for fact extraction. Defaults to MEMORY_MODEL, then AI_MODEL."""
+    provider = _provider()
+    if provider == "anthropic":
+        return os.getenv("MEMORY_MODEL", os.getenv("AI_MODEL", "claude-haiku-4-5-20251001"))
+    if provider == "grok":
+        return os.getenv("MEMORY_MODEL", os.getenv("AI_MODEL", "grok-3-mini"))
+    return os.getenv("MEMORY_MODEL", os.getenv("AI_MODEL", "gpt-4o-mini"))
+
+
 async def _call_openai(user_content: str) -> str | None:
     try:
         import openai
     except ImportError:
         return None
     client = openai.AsyncOpenAI()
-    model = os.getenv("AI_MODEL", "gpt-4o-mini")
+    model = _memory_model()
     try:
         resp = await client.chat.completions.create(
             model=model,
@@ -170,7 +180,7 @@ async def _call_grok(user_content: str) -> str | None:
         api_key=os.getenv("XAI_API_KEY"),
         base_url="https://api.x.ai/v1",
     )
-    model = os.getenv("AI_MODEL", "grok-3-mini")
+    model = _memory_model()
     try:
         resp = await client.chat.completions.create(
             model=model,
@@ -192,7 +202,7 @@ async def _call_anthropic(user_content: str) -> str | None:
     except ImportError:
         return None
     client = anthropic.AsyncAnthropic()
-    model = os.getenv("AI_MODEL", "claude-haiku-4-5-20251001")
+    model = _memory_model()
     try:
         resp = await client.messages.create(
             model=model,

@@ -1,12 +1,13 @@
 # dashboard/app.py
+import json
 import os
+import re
+from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
-
-import json
 
 from fastapi import Cookie, Depends, FastAPI, Form, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -15,7 +16,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from bot.database import AsyncSessionLocal, init_db
-from bot.models import Group, Message, Persona
+from bot.memory import retrieve_relevant_memories
+from bot.models import Group, GroupMemory, Message, Persona
 from dashboard.auth import (
     SESSION_COOKIE,
     make_session_token,
@@ -171,7 +173,7 @@ async def group_detail(group_id: int, request: Request, _=Depends(get_current_us
 
 @app.get("/groups/{group_id}/analyze")
 async def analyze_persona(group_id: int, _=Depends(get_current_user)):
-    """Fetch the bot's recent messages and return an AI character analysis."""
+    """Deep bot character analysis: context pairs, temporal, typology, trend, vector facts."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Group)
@@ -182,32 +184,105 @@ async def analyze_persona(group_id: int, _=Depends(get_current_user)):
         if not group or not group.persona:
             return JSONResponse({"error": "Qrup tapılmadı"}, status_code=404)
 
-        bot_messages = await session.execute(
-            select(Message.text)
-            .where(Message.group_id == group_id, Message.is_bot == True)  # noqa: E712
+        all_msgs_result = await session.execute(
+            select(Message.text, Message.is_bot, Message.sent_at)
+            .where(Message.group_id == group_id)
             .order_by(Message.sent_at.desc())
-            .limit(50)
+            .limit(80)
         )
-        messages = list(reversed(bot_messages.scalars().all()))
+        all_rows = list(reversed(all_msgs_result.all()))
 
-    if len(messages) < 5:
+    bot_rows = [r for r in all_rows if r.is_bot]
+    if len(bot_rows) < 5:
         return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
 
-    sample = "\n".join(f"- {m}" for m in messages)
-    prompt = (
-        f"Aşağıda '{group.persona.name}' adlı bot-un son mesajları var.\n\n"
-        f"{sample}\n\n"
-        "Bu mesajlara əsasən botun real xarakterini analiz et:\n"
-        "1. Danışıq tərzi necədir?\n"
-        "2. Dominant əhval-ruhiyyə nədir?\n"
-        "3. Yumor istifadə edir mi, necə?\n"
-        "4. Nə vaxt aktiv, nə vaxt passiv olur?\n"
-        "5. Konfiqurasiya ilə real davranış arasında fərq varmı?\n\n"
-        "Qısa, konkret, Azərbaycanca yaz. Maksimum 150 söz."
+    bot_rows = bot_rows[-30:]
+
+    # #1 Context pairs: user message → bot reply
+    context_pairs = []
+    for i, row in enumerate(all_rows):
+        if row.is_bot:
+            for j in range(i - 1, max(i - 4, -1), -1):
+                if not all_rows[j].is_bot:
+                    context_pairs.append((all_rows[j].text, row.text))
+                    break
+    pairs_sample = "\n".join(
+        f"  İstifadəçi: {u}\n  Bot: {b}" for u, b in context_pairs[-10:]
     )
 
-    analysis = await _call_ai_for_analysis(prompt)
-    return JSONResponse({"analysis": analysis or "Analiz alınmadı."})
+    # #2 Temporal stats
+    hours = [r.sent_at.hour for r in bot_rows if r.sent_at]
+    peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
+
+    # #4 Message typology
+    word_counts = [len(r.text.split()) for r in bot_rows]
+    avg_words = round(sum(word_counts) / len(word_counts), 1)
+    question_pct = round(sum(1 for r in bot_rows if "?" in r.text) / len(bot_rows) * 100)
+
+    # #5 Trend: first half vs second half
+    mid = len(bot_rows) // 2
+    first_half = "\n".join(f"- {r.text}" for r in bot_rows[:mid])
+    second_half = "\n".join(f"- {r.text}" for r in bot_rows[mid:])
+
+    # Vector facts
+    async with AsyncSessionLocal() as session:
+        stored_facts = await retrieve_relevant_memories(
+            session, group_id, " ".join(r.text for r in bot_rows[-10:]), top_k=8
+        )
+    facts_block = ""
+    if stored_facts:
+        facts_block = "Yığılmış qrup bilikləri:\n" + "\n".join(f"- {f}" for f in stored_facts) + "\n"
+
+    prompt = f"""'{group.persona.name}' botunun dərin xarakter analizini JSON formatında ver.
+
+Əvvəlki mesajlar:
+{first_half}
+
+Son mesajlar:
+{second_half}
+
+Kontekst cütlükləri (istifadəçi → bot cavabı):
+{pairs_sample}
+
+{facts_block}
+Statistika:
+- Orta mesaj uzunluğu: {avg_words} söz
+- Sual faizi: {question_pct}%
+- Ən aktiv saatlar: {", ".join(peak_hours) if peak_hours else "məlumat yox"}
+
+Yalnız bu JSON strukturunu qaytar, başqa heç nə yazma:
+{{
+  "danishiq_terzi": "danışıq tərzi və üslubu, 2-3 cümlə",
+  "dominant_ehval": "dominant əhval-ruhiyyə, 1-2 cümlə",
+  "yumor": "yumor istifadəsi, 1-2 cümlə",
+  "aktiv_vaxt": "aktivlik vaxtı nümunəsi, 1-2 cümlə",
+  "konfig_ferqi": "konfiqurasiya ilə real davranış fərqi, 1-2 cümlə",
+  "trend": "əvvəlki vs son mesajlar arasında dəyişim, 1-2 cümlə"
+}}"""
+
+    raw = await _call_ai_for_analysis(prompt)
+    return _parse_analysis_response(raw)
+
+
+def _parse_analysis_response(raw: str | None) -> JSONResponse:
+    if not raw:
+        return JSONResponse({"error": "Analiz alınmadı."})
+    match = re.search(r"\{[\s\S]*\}", raw)
+    if match:
+        try:
+            return JSONResponse({"analysis": json.loads(match.group())})
+        except json.JSONDecodeError:
+            pass
+    return JSONResponse({"analysis": raw})
+
+
+def _analysis_model() -> str:
+    provider = os.getenv("AI_PROVIDER", "openai").lower()
+    if provider == "anthropic":
+        return os.getenv("ANALYSIS_MODEL", os.getenv("AI_MODEL", "claude-haiku-4-5-20251001"))
+    if provider == "grok":
+        return os.getenv("ANALYSIS_MODEL", os.getenv("AI_MODEL", "grok-3-mini"))
+    return os.getenv("ANALYSIS_MODEL", os.getenv("AI_MODEL", "gpt-4o-mini"))
 
 
 async def _call_ai_for_analysis(prompt: str) -> str | None:
@@ -217,7 +292,7 @@ async def _call_ai_for_analysis(prompt: str) -> str | None:
             import anthropic
             client = anthropic.AsyncAnthropic()
             resp = await client.messages.create(
-                model=os.getenv("AI_MODEL", "claude-haiku-4-5-20251001"),
+                model=_analysis_model(),
                 max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -228,7 +303,7 @@ async def _call_ai_for_analysis(prompt: str) -> str | None:
                 api_key=os.getenv("XAI_API_KEY"), base_url="https://api.x.ai/v1"
             )
             resp = await client.chat.completions.create(
-                model=os.getenv("AI_MODEL", "grok-3-mini"),
+                model=_analysis_model(),
                 max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -237,7 +312,7 @@ async def _call_ai_for_analysis(prompt: str) -> str | None:
             import openai
             client = openai.AsyncOpenAI()
             resp = await client.chat.completions.create(
-                model=os.getenv("AI_MODEL", "gpt-4o-mini"),
+                model=_analysis_model(),
                 max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -248,34 +323,73 @@ async def _call_ai_for_analysis(prompt: str) -> str | None:
 
 @app.get("/groups/{group_id}/members/{sender_id}/analyze")
 async def analyze_member(group_id: int, sender_id: int, _=Depends(get_current_user)):
+    """Deep member character analysis: typology, temporal, trend, vector facts."""
     async with AsyncSessionLocal() as session:
         msgs_result = await session.execute(
-            select(Message.text, Message.sender_name)
+            select(Message.text, Message.sender_name, Message.sent_at)
             .where(Message.group_id == group_id, Message.sender_id == sender_id, Message.is_bot == False)  # noqa: E712
             .order_by(Message.sent_at.desc())
-            .limit(80)
+            .limit(40)
         )
-        rows = msgs_result.all()
+        rows = list(reversed(msgs_result.all()))
 
     if len(rows) < 5:
         return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
 
-    name = rows[0].sender_name
-    sample = "\n".join(f"- {r.text}" for r in reversed(rows))
-    prompt = (
-        f"Aşağıda '{name}' adlı şəxsin Telegram qrup mesajları var.\n\n"
-        f"{sample}\n\n"
-        "Bu mesajlara əsasən şəxsin xarakter profilini çıxar:\n"
-        "1. Ümumi şəxsiyyət tipi necədir?\n"
-        "2. Danışıq tərzi və üslubu?\n"
-        "3. Maraqları və tez-tez danışdığı mövzular?\n"
-        "4. Qrupdakı rolu — lider, zarafatçı, müşahidəçi?\n"
-        "5. Əhval-ruhiyyəsi — optimist, tənqidçi, neytral?\n\n"
-        "Qısa, konkret, Azərbaycanca yaz. Maksimum 150 söz."
-    )
+    name = rows[-1].sender_name
 
-    analysis = await _call_ai_for_analysis(prompt)
-    return JSONResponse({"analysis": analysis or "Analiz alınmadı.", "name": name})
+    # #2 Temporal stats
+    hours = [r.sent_at.hour for r in rows if r.sent_at]
+    peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
+
+    # #4 Message typology
+    word_counts = [len(r.text.split()) for r in rows]
+    avg_words = round(sum(word_counts) / len(word_counts), 1)
+    question_pct = round(sum(1 for r in rows if "?" in r.text) / len(rows) * 100)
+
+    # #5 Trend: first half vs second half
+    mid = len(rows) // 2
+    first_half = "\n".join(f"- {r.text}" for r in rows[:mid])
+    second_half = "\n".join(f"- {r.text}" for r in rows[mid:])
+
+    # Vector facts
+    async with AsyncSessionLocal() as session:
+        query = f"{name} " + " ".join(r.text for r in rows[-10:])
+        stored_facts = await retrieve_relevant_memories(session, group_id, query, top_k=8)
+    facts_block = ""
+    if stored_facts:
+        facts_block = "Yığılmış qrup bilikləri:\n" + "\n".join(f"- {f}" for f in stored_facts) + "\n"
+
+    prompt = f"""'{name}' adlı şəxsin dərin xarakter analizini JSON formatında ver.
+
+Əvvəlki mesajlar:
+{first_half}
+
+Son mesajlar:
+{second_half}
+
+{facts_block}
+Statistika:
+- Orta mesaj uzunluğu: {avg_words} söz
+- Sual faizi: {question_pct}%
+- Ən aktiv saatlar: {", ".join(peak_hours) if peak_hours else "məlumat yox"}
+
+Yalnız bu JSON strukturunu qaytar, başqa heç nə yazma:
+{{
+  "shexsiyyet": "ümumi şəxsiyyət tipi, 2-3 cümlə",
+  "danishiq_terzi": "danışıq tərzi və üslubu, 1-2 cümlə",
+  "maraqlar": "maraqları və tez-tez danışdığı mövzular, 1-2 cümlə",
+  "qrupdaki_rol": "qrupdakı rolu — lider, zarafatçı, müşahidəçi və s., 1-2 cümlə",
+  "ehval": "əhval-ruhiyyəsi — optimist, tənqidçi, neytral, 1-2 cümlə",
+  "trend": "əvvəlki vs son mesajlar arasında dəyişim, 1-2 cümlə"
+}}"""
+
+    raw = await _call_ai_for_analysis(prompt)
+    result = _parse_analysis_response(raw)
+    # Inject name for frontend
+    result_data = json.loads(result.body)
+    result_data["name"] = name
+    return JSONResponse(result_data)
 
 
 @app.post("/groups/{group_id}/persona")

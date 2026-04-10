@@ -131,7 +131,7 @@
   <div class="flex items-center justify-between mb-4">
     <div>
       <h2 class="font-semibold text-white">Xarakter Analizi</h2>
-      <p class="text-xs text-gray-500 mt-0.5">Son 50 bot mesajına əsasən real davranış analizi</p>
+      <p class="text-xs text-gray-500 mt-0.5">Kontekst, zaman, üslub və trend əsasında dərin analiz</p>
     </div>
     <button onclick="runAnalysis()"
             id="analyze-btn"
@@ -140,7 +140,7 @@
     </button>
   </div>
   <div id="analysis-result" class="hidden">
-    <div class="border-t border-gray-800 pt-4 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap" id="analysis-text"></div>
+    <div class="border-t border-gray-800 pt-4" id="analysis-text"></div>
   </div>
 </div>
 
@@ -167,9 +167,8 @@
       </button>
     </div>
     <!-- Result panel for this member -->
-    <div id="member-result-{{ member.sender_id }}" class="hidden px-4 pb-3">
-      <div class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap
-                  border-l-2 border-purple-500/40 pl-4 py-1"></div>
+    <div id="member-result-{{ member.sender_id }}" class="hidden px-2 pb-3">
+      <div class="member-analysis-cards"></div>
     </div>
     {% endfor %}
   </div>
@@ -180,11 +179,43 @@
 <script>
 const PRESETS = {{ presets | tojson | safe }};
 
+const BOT_CARD_LABELS = {
+  danishiq_terzi: 'Danışıq Tərzi',
+  dominant_ehval: 'Dominant Əhval',
+  yumor: 'Yumor',
+  aktiv_vaxt: 'Aktiv Vaxt',
+  konfig_ferqi: 'Konfiq vs Real',
+  trend: 'Dəyişim Trendi',
+};
+const MEMBER_CARD_LABELS = {
+  shexsiyyet: 'Şəxsiyyət Tipi',
+  danishiq_terzi: 'Danışıq Tərzi',
+  maraqlar: 'Maraqlar',
+  qrupdaki_rol: 'Qrupdakı Rol',
+  ehval: 'Əhval-Ruhiyyə',
+  trend: 'Dəyişim Trendi',
+};
+
+function renderCards(container, analysis, labelMap) {
+  if (typeof analysis === 'string') {
+    container.innerHTML = `<p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">${analysis}</p>`;
+    return;
+  }
+  const cards = Object.entries(labelMap).map(([key, label]) => {
+    const val = analysis[key] || '—';
+    return `<div class="bg-gray-800/60 border border-gray-700/50 rounded-xl p-3">
+      <p class="text-xs font-medium text-indigo-400 mb-1">${label}</p>
+      <p class="text-sm text-gray-300 leading-relaxed">${val}</p>
+    </div>`;
+  }).join('');
+  container.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">${cards}</div>`;
+}
+
 async function runAnalysis() {
   const btn = document.getElementById('analyze-btn');
   const btnText = document.getElementById('analyze-btn-text');
   const result = document.getElementById('analysis-result');
-  const text = document.getElementById('analysis-text');
+  const container = document.getElementById('analysis-text');
 
   btnText.textContent = 'Analiz edilir...';
   btn.disabled = true;
@@ -192,10 +223,14 @@ async function runAnalysis() {
   try {
     const resp = await fetch('/groups/{{ group.id }}/analyze');
     const data = await resp.json();
-    text.textContent = data.analysis || data.error || 'Xəta baş verdi.';
+    if (data.error) {
+      container.innerHTML = `<p class="text-sm text-red-400">${data.error}</p>`;
+    } else {
+      renderCards(container, data.analysis, BOT_CARD_LABELS);
+    }
     result.classList.remove('hidden');
   } catch(e) {
-    text.textContent = 'Xəta baş verdi.';
+    container.innerHTML = '<p class="text-sm text-red-400">Xəta baş verdi.</p>';
     result.classList.remove('hidden');
   }
 
@@ -205,16 +240,20 @@ async function runAnalysis() {
 
 async function analyzeMember(senderId, btn) {
   const panel = document.getElementById('member-result-' + senderId);
-  const textEl = panel.querySelector('div');
+  const container = panel.querySelector('.member-analysis-cards');
   btn.textContent = 'Yüklənir...';
   btn.disabled = true;
   try {
     const resp = await fetch('/groups/{{ group.id }}/members/' + senderId + '/analyze');
     const data = await resp.json();
-    textEl.textContent = data.analysis || data.error || 'Xəta baş verdi.';
+    if (data.error) {
+      container.innerHTML = `<p class="text-sm text-red-400 pl-2">${data.error}</p>`;
+    } else {
+      renderCards(container, data.analysis, MEMBER_CARD_LABELS);
+    }
     panel.classList.remove('hidden');
   } catch(e) {
-    textEl.textContent = 'Xəta baş verdi.';
+    container.innerHTML = '<p class="text-sm text-red-400 pl-2">Xəta baş verdi.</p>';
     panel.classList.remove('hidden');
   }
   btn.textContent = 'Yenilə';
