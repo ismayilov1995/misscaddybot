@@ -130,10 +130,13 @@ async def get_context_messages(
     rows = list(reversed(result.scalars().all()))
     messages = []
     for row in rows:
-        if row.is_bot:
-            messages.append({"role": "assistant", "content": row.text})
+        role = "assistant" if row.is_bot else "user"
+        content = row.text if row.is_bot else f"{row.sender_name}: {row.text}"
+        # Merge consecutive same-role messages (required by Anthropic)
+        if messages and messages[-1]["role"] == role:
+            messages[-1]["content"] += f"\n{content}"
         else:
-            messages.append({"role": "user", "content": f"{row.sender_name}: {row.text}"})
+            messages.append({"role": role, "content": content})
     return messages
 
 
