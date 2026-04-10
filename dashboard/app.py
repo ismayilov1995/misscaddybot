@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import json
+
 from fastapi import Cookie, Depends, FastAPI, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -25,6 +27,7 @@ from dashboard.presets import PRESETS
 
 app = FastAPI(docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.filters["tojson"] = lambda v: json.dumps(v, ensure_ascii=False)
 
 
 @app.on_event("startup")
