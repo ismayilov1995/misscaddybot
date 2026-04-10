@@ -41,7 +41,7 @@ async def startup():
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = ""):
-    return templates.TemplateResponse("login.html", {"request": request, "error": error})
+    return templates.TemplateResponse(request, "login.html", {"error": error})
 
 
 @app.post("/login")
@@ -100,8 +100,7 @@ async def index(request: Request, _=Depends(get_current_user)):
             )
             counts[group.id] = cnt.scalar() or 0
 
-    return templates.TemplateResponse("groups.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "groups.html", {
         "groups": groups,
         "counts": counts,
     })
@@ -145,8 +144,7 @@ async def group_detail(group_id: int, request: Request, _=Depends(get_current_us
         )
         total_messages = cnt.scalar() or 0
 
-    return templates.TemplateResponse("group_edit.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "group_edit.html", {
         "group": group,
         "persona": group.persona,
         "total_messages": total_messages,
