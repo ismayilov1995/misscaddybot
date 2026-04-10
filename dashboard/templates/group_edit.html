@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}{{ group.title }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="flex items-center gap-4 mb-8">
+  <a href="/" class="text-gray-500 hover:text-white transition">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+    </svg>
+  </a>
+  <div>
+    <h1 class="text-2xl font-bold text-white">{{ group.title }}</h1>
+    <p class="text-gray-500 text-sm mt-0.5">{{ total_messages }} mesaj · ID: {{ group.telegram_id }}</p>
+  </div>
+  {% if request.query_params.get('saved') %}
+  <span class="ml-auto px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm">
+    ✓ Yadda saxlanıldı
+  </span>
+  {% endif %}
+</div>
+
+<div class="grid grid-cols-3 gap-6">
+
+  <!-- Presets -->
+  <div class="col-span-1">
+    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Hazır Personalar</h2>
+    <div class="space-y-2">
+      {% for p in presets %}
+      <button type="button" onclick="applyPreset({{ loop.index0 }})"
+              class="w-full text-left px-4 py-3 rounded-xl bg-gray-900 border border-gray-800
+                     hover:border-indigo-500/50 hover:bg-gray-800 transition group">
+        <div class="flex items-center gap-3">
+          <span class="text-xl">{{ p.emoji }}</span>
+          <span class="text-sm font-medium text-gray-200 group-hover:text-white transition">{{ p.label }}</span>
+        </div>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Edit form -->
+  <div class="col-span-2">
+    <form method="post" action="/groups/{{ group.id }}/persona" class="space-y-5">
+
+      <div class="grid grid-cols-2 gap-4">
+        <!-- Name -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">Ad</label>
+          <input id="f-name" name="name" type="text" value="{{ persona.name if persona else '' }}"
+                 class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                        focus:outline-none focus:border-indigo-500 transition" />
+        </div>
+
+        <!-- Gender -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">Cinsiyyət</label>
+          <select id="f-gender" name="gender"
+                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                         focus:outline-none focus:border-indigo-500 transition">
+            <option value="kişi" {% if persona and 'qadın' not in (persona.bio or '') %}selected{% endif %}>Kişi</option>
+            <option value="qadın" {% if persona and 'qadın' in (persona.bio or '') %}selected{% endif %}>Qadın</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Bio -->
+      <div>
+        <label class="block text-sm text-gray-400 mb-1.5">Bio</label>
+        <textarea id="f-bio" name="bio" rows="2"
+                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                         focus:outline-none focus:border-indigo-500 transition resize-none">{{ persona.bio if persona else '' }}</textarea>
+      </div>
+
+      <!-- Personality -->
+      <div>
+        <label class="block text-sm text-gray-400 mb-1.5">Xarakter</label>
+        <textarea id="f-personality" name="personality" rows="4"
+                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                         focus:outline-none focus:border-indigo-500 transition resize-none">{{ persona.personality if persona else '' }}</textarea>
+      </div>
+
+      <!-- Language style -->
+      <div>
+        <label class="block text-sm text-gray-400 mb-1.5">Danışıq tərzi</label>
+        <textarea id="f-language-style" name="language_style" rows="3"
+                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                         focus:outline-none focus:border-indigo-500 transition resize-none">{{ persona.language_style if persona else '' }}</textarea>
+      </div>
+
+      <!-- Settings row -->
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">Auto mesaj min (dəq)</label>
+          <input name="auto_message_interval_min" type="number"
+                 value="{{ persona.auto_message_interval_min if persona else 45 }}"
+                 class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                        focus:outline-none focus:border-indigo-500 transition" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">Auto mesaj max (dəq)</label>
+          <input name="auto_message_interval_max" type="number"
+                 value="{{ persona.auto_message_interval_max if persona else 180 }}"
+                 class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                        focus:outline-none focus:border-indigo-500 transition" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">Kontekst pəncərəsi</label>
+          <input name="context_window" type="number"
+                 value="{{ persona.context_window if persona else 20 }}"
+                 class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                        focus:outline-none focus:border-indigo-500 transition" />
+        </div>
+      </div>
+
+      <div class="flex justify-end">
+        <button type="submit"
+                class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium
+                       rounded-lg transition">
+          Yadda saxla
+        </button>
+      </div>
+
+    </form>
+  </div>
+</div>
+
+<!-- Preset data -->
+<script>
+const PRESETS = {{ presets | tojson }};
+
+function applyPreset(index) {
+  const p = PRESETS[index];
+  document.getElementById('f-name').value = p.name;
+  document.getElementById('f-bio').value = p.bio;
+  document.getElementById('f-personality').value = p.personality;
+  document.getElementById('f-language-style').value = p.language_style;
+  const genderSelect = document.getElementById('f-gender');
+  for (let opt of genderSelect.options) {
+    opt.selected = opt.value === p.gender;
+  }
+}
+</script>
+{% endblock %}
