@@ -144,6 +144,38 @@
   </div>
 </div>
 
+<!-- Group members -->
+{% if members %}
+<div class="mt-6 bg-gray-900 border border-gray-800 rounded-2xl p-6">
+  <h2 class="font-semibold text-white mb-1">Qrup Üzvləri</h2>
+  <p class="text-xs text-gray-500 mb-4">Mesajlara əsasən xarakter analizi</p>
+  <div class="space-y-3">
+    {% for member in members %}
+    <div class="flex items-center gap-4 p-3 rounded-xl bg-gray-800/50 border border-gray-700/50">
+      <div class="w-8 h-8 rounded-lg bg-purple-600/20 border border-purple-500/30
+                  flex items-center justify-center text-purple-400 font-bold text-sm flex-shrink-0">
+        {{ member.name[0] | upper }}
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium text-gray-200">{{ member.name }}</p>
+        <p class="text-xs text-gray-500">{{ member.msg_count }} mesaj</p>
+      </div>
+      <button onclick="analyzeMember({{ member.sender_id }}, this)"
+              class="px-3 py-1.5 text-xs rounded-lg border border-purple-500/30 text-purple-400
+                     hover:bg-purple-500/10 transition flex-shrink-0">
+        Analiz et
+      </button>
+    </div>
+    <!-- Result panel for this member -->
+    <div id="member-result-{{ member.sender_id }}" class="hidden px-4 pb-3">
+      <div class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap
+                  border-l-2 border-purple-500/40 pl-4 py-1"></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <!-- Preset data -->
 <script>
 const PRESETS = {{ presets | tojson | safe }};
@@ -168,6 +200,24 @@ async function runAnalysis() {
   }
 
   btnText.textContent = 'Yenilə';
+  btn.disabled = false;
+}
+
+async function analyzeMember(senderId, btn) {
+  const panel = document.getElementById('member-result-' + senderId);
+  const textEl = panel.querySelector('div');
+  btn.textContent = 'Yüklənir...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/groups/{{ group.id }}/members/' + senderId + '/analyze');
+    const data = await resp.json();
+    textEl.textContent = data.analysis || data.error || 'Xəta baş verdi.';
+    panel.classList.remove('hidden');
+  } catch(e) {
+    textEl.textContent = 'Xəta baş verdi.';
+    panel.classList.remove('hidden');
+  }
+  btn.textContent = 'Yenilə';
   btn.disabled = false;
 }
 

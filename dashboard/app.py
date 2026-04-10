@@ -144,11 +144,28 @@ async def group_detail(group_id: int, request: Request, _=Depends(get_current_us
         )
         total_messages = cnt.scalar() or 0
 
+        # Distinct members with message counts
+        members_result = await session.execute(
+            select(
+                Message.sender_id,
+                Message.sender_name,
+                func.count(Message.id).label("msg_count"),
+            )
+            .where(Message.group_id == group.id, Message.is_bot == False)  # noqa: E712
+            .group_by(Message.sender_id, Message.sender_name)
+            .order_by(func.count(Message.id).desc())
+        )
+        members = [
+            {"sender_id": r.sender_id, "name": r.sender_name, "msg_count": r.msg_count}
+            for r in members_result.all()
+        ]
+
     return templates.TemplateResponse(request, "group_edit.html", {
         "group": group,
         "persona": group.persona,
         "total_messages": total_messages,
         "presets": PRESETS,
+        "members": members,
     })
 
 
@@ -227,6 +244,38 @@ async def _call_ai_for_analysis(prompt: str) -> str | None:
             return resp.choices[0].message.content
     except Exception as e:
         return f"Xəta: {e}"
+
+
+@app.get("/groups/{group_id}/members/{sender_id}/analyze")
+async def analyze_member(group_id: int, sender_id: int, _=Depends(get_current_user)):
+    async with AsyncSessionLocal() as session:
+        msgs_result = await session.execute(
+            select(Message.text, Message.sender_name)
+            .where(Message.group_id == group_id, Message.sender_id == sender_id, Message.is_bot == False)  # noqa: E712
+            .order_by(Message.sent_at.desc())
+            .limit(80)
+        )
+        rows = msgs_result.all()
+
+    if len(rows) < 5:
+        return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
+
+    name = rows[0].sender_name
+    sample = "\n".join(f"- {r.text}" for r in reversed(rows))
+    prompt = (
+        f"Aşağıda '{name}' adlı şəxsin Telegram qrup mesajları var.\n\n"
+        f"{sample}\n\n"
+        "Bu mesajlara əsasən şəxsin xarakter profilini çıxar:\n"
+        "1. Ümumi şəxsiyyət tipi necədir?\n"
+        "2. Danışıq tərzi və üslubu?\n"
+        "3. Maraqları və tez-tez danışdığı mövzular?\n"
+        "4. Qrupdakı rolu — lider, zarafatçı, müşahidəçi?\n"
+        "5. Əhval-ruhiyyəsi — optimist, tənqidçi, neytral?\n\n"
+        "Qısa, konkret, Azərbaycanca yaz. Maksimum 150 söz."
+    )
+
+    analysis = await _call_ai_for_analysis(prompt)
+    return JSONResponse({"analysis": analysis or "Analiz alınmadı.", "name": name})
 
 
 @app.post("/groups/{group_id}/persona")
