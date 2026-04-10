@@ -1,6 +1,7 @@
 # bot/database.py
 import os
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from bot.models import Base
@@ -20,6 +21,5 @@ AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
 async def init_db() -> None:
     """Create all tables if they do not exist. Called once at startup via post_init hook."""
     async with engine.begin() as conn:
-        # conn.run_sync() is required — Base.metadata.create_all is synchronous.
-        # Calling create_all(engine) directly with an async engine raises MissingGreenlet.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)

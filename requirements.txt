@@ -5,3 +5,4 @@ sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
+pgvector>=0.3.0

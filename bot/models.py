@@ -1,6 +1,7 @@
 # bot/models.py
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -21,6 +22,7 @@ class Group(Base):
 
     persona: Mapped["Persona"] = relationship("Persona", back_populates="group", uselist=False)
     messages: Mapped[list["Message"]] = relationship("Message", back_populates="group")
+    memories: Mapped[list["GroupMemory"]] = relationship("GroupMemory", back_populates="group")
 
 
 class Persona(Base):
@@ -60,3 +62,15 @@ class Message(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     group: Mapped["Group"] = relationship("Group", back_populates="messages")
+
+
+class GroupMemory(Base):
+    __tablename__ = "group_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), nullable=False, index=True)
+    fact: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    group: Mapped["Group"] = relationship("Group", back_populates="memories")

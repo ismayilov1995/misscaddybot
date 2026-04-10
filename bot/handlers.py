@@ -164,7 +164,11 @@ async def reply_to_mention(
         context_messages = await get_context_messages(
             session, group.id, persona.context_window
         )
-        reply = await generate_reply(persona, context_messages)
+
+        from bot.memory import get_memory_context, maybe_update_memory
+        memory_context = await get_memory_context(session, group.id, context_messages)
+
+        reply = await generate_reply(persona, context_messages, memory_context=memory_context)
         if reply is None:
             return
 
@@ -186,6 +190,8 @@ async def reply_to_mention(
             replied_to_id=None,
             sent_at=sent_msg.date,
         )
+
+    asyncio.create_task(maybe_update_memory(group, context_messages))
 
 
 async def handle_message(
