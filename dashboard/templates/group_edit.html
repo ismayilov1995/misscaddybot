@@ -128,7 +128,7 @@
 
 <!-- Preset data -->
 <script>
-const PRESETS = {{ presets | tojson }};
+const PRESETS = {{ presets | tojson | safe }};
 
 function applyPreset(index) {
   const p = PRESETS[index];
