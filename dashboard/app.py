@@ -9,7 +9,7 @@ load_dotenv()
 import json
 
 from fastapi import Cookie, Depends, FastAPI, Form, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -150,6 +150,83 @@ async def group_detail(group_id: int, request: Request, _=Depends(get_current_us
         "total_messages": total_messages,
         "presets": PRESETS,
     })
+
+
+@app.get("/groups/{group_id}/analyze")
+async def analyze_persona(group_id: int, _=Depends(get_current_user)):
+    """Fetch the bot's recent messages and return an AI character analysis."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Group)
+            .options(selectinload(Group.persona))
+            .where(Group.id == group_id)
+        )
+        group = result.scalar_one_or_none()
+        if not group or not group.persona:
+            return JSONResponse({"error": "Qrup tapılmadı"}, status_code=404)
+
+        bot_messages = await session.execute(
+            select(Message.text)
+            .where(Message.group_id == group_id, Message.is_bot == True)  # noqa: E712
+            .order_by(Message.sent_at.desc())
+            .limit(50)
+        )
+        messages = list(reversed(bot_messages.scalars().all()))
+
+    if len(messages) < 5:
+        return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
+
+    sample = "\n".join(f"- {m}" for m in messages)
+    prompt = (
+        f"Aşağıda '{group.persona.name}' adlı bot-un son mesajları var.\n\n"
+        f"{sample}\n\n"
+        "Bu mesajlara əsasən botun real xarakterini analiz et:\n"
+        "1. Danışıq tərzi necədir?\n"
+        "2. Dominant əhval-ruhiyyə nədir?\n"
+        "3. Yumor istifadə edir mi, necə?\n"
+        "4. Nə vaxt aktiv, nə vaxt passiv olur?\n"
+        "5. Konfiqurasiya ilə real davranış arasında fərq varmı?\n\n"
+        "Qısa, konkret, Azərbaycanca yaz. Maksimum 150 söz."
+    )
+
+    analysis = await _call_ai_for_analysis(prompt)
+    return JSONResponse({"analysis": analysis or "Analiz alınmadı."})
+
+
+async def _call_ai_for_analysis(prompt: str) -> str | None:
+    provider = os.getenv("AI_PROVIDER", "openai").lower()
+    try:
+        if provider == "anthropic":
+            import anthropic
+            client = anthropic.AsyncAnthropic()
+            resp = await client.messages.create(
+                model=os.getenv("AI_MODEL", "claude-haiku-4-5-20251001"),
+                max_tokens=400,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text
+        elif provider == "grok":
+            import openai
+            client = openai.AsyncOpenAI(
+                api_key=os.getenv("XAI_API_KEY"), base_url="https://api.x.ai/v1"
+            )
+            resp = await client.chat.completions.create(
+                model=os.getenv("AI_MODEL", "grok-3-mini"),
+                max_tokens=400,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.choices[0].message.content
+        else:
+            import openai
+            client = openai.AsyncOpenAI()
+            resp = await client.chat.completions.create(
+                model=os.getenv("AI_MODEL", "gpt-4o-mini"),
+                max_tokens=400,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.choices[0].message.content
+    except Exception as e:
+        return f"Xəta: {e}"
 
 
 @app.post("/groups/{group_id}/persona")

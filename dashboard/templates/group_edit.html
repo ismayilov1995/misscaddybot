@@ -126,9 +126,50 @@
   </div>
 </div>
 
+<!-- Character analysis -->
+<div class="mt-8 bg-gray-900 border border-gray-800 rounded-2xl p-6">
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <h2 class="font-semibold text-white">Xarakter Analizi</h2>
+      <p class="text-xs text-gray-500 mt-0.5">Son 50 bot mesajına əsasən real davranış analizi</p>
+    </div>
+    <button onclick="runAnalysis()"
+            id="analyze-btn"
+            class="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center gap-2">
+      <span id="analyze-btn-text">Analiz et</span>
+    </button>
+  </div>
+  <div id="analysis-result" class="hidden">
+    <div class="border-t border-gray-800 pt-4 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap" id="analysis-text"></div>
+  </div>
+</div>
+
 <!-- Preset data -->
 <script>
 const PRESETS = {{ presets | tojson | safe }};
+
+async function runAnalysis() {
+  const btn = document.getElementById('analyze-btn');
+  const btnText = document.getElementById('analyze-btn-text');
+  const result = document.getElementById('analysis-result');
+  const text = document.getElementById('analysis-text');
+
+  btnText.textContent = 'Analiz edilir...';
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch('/groups/{{ group.id }}/analyze');
+    const data = await resp.json();
+    text.textContent = data.analysis || data.error || 'Xəta baş verdi.';
+    result.classList.remove('hidden');
+  } catch(e) {
+    text.textContent = 'Xəta baş verdi.';
+    result.classList.remove('hidden');
+  }
+
+  btnText.textContent = 'Yenilə';
+  btn.disabled = false;
+}
 
 function applyPreset(index) {
   const p = PRESETS[index];
