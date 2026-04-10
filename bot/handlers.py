@@ -113,19 +113,23 @@ async def get_context_messages(
     session: AsyncSession,
     group_id: int,
     limit: int,
+    after_message_id: int | None = None,
 ) -> list[dict]:
     """
-    Fetch the last N messages for a group and return them as Claude message dicts.
+    Fetch recent messages for a group and return them as Claude message dicts.
+
+    If after_message_id is provided, only returns messages after that ID
+    (used with rolling summaries — the summary covers everything before).
 
     Returns messages in chronological order (oldest first).
     is_bot=True  → {"role": "assistant", "content": text}
     is_bot=False → {"role": "user", "content": "{sender_name}: {text}"}
     """
+    query = select(Message).where(Message.group_id == group_id)
+    if after_message_id is not None:
+        query = query.where(Message.id > after_message_id)
     result = await session.execute(
-        select(Message)
-        .where(Message.group_id == group_id)
-        .order_by(Message.sent_at.desc())
-        .limit(limit)
+        query.order_by(Message.sent_at.desc()).limit(limit)
     )
     rows = list(reversed(result.scalars().all()))
     messages = []
@@ -164,14 +168,22 @@ async def reply_to_mention(
     chat_id = update.effective_message.chat_id
 
     async with AsyncSessionLocal() as session:
+        from bot.summary import get_latest_summary, maybe_generate_summary
+        summary_text, last_msg_id = await get_latest_summary(session, group.id)
+
         context_messages = await get_context_messages(
-            session, group.id, persona.context_window
+            session, group.id, persona.context_window,
+            after_message_id=last_msg_id,
         )
 
         from bot.memory import get_memory_context, maybe_update_memory
         memory_context = await get_memory_context(session, group.id, context_messages)
 
-        reply = await generate_reply(persona, context_messages, memory_context=memory_context)
+        reply = await generate_reply(
+            persona, context_messages,
+            memory_context=memory_context,
+            summary_context=summary_text or "",
+        )
         if reply is None:
             return
 
@@ -195,6 +207,7 @@ async def reply_to_mention(
         )
 
     asyncio.create_task(maybe_update_memory(group, context_messages))
+    asyncio.create_task(maybe_generate_summary(group.id, group.telegram_id))
 
 
 async def handle_message(

@@ -1,4 +1,5 @@
 # bot/scheduler.py
+import asyncio
 import logging
 import random
 
@@ -38,11 +39,15 @@ async def send_auto_message(application) -> None:
 
         try:
             async with AsyncSessionLocal() as session:
+                from bot.summary import get_latest_summary, maybe_generate_summary
+                summary_text, last_msg_id = await get_latest_summary(session, group.id)
+
                 context_messages = await get_context_messages(
-                    session, group.id, persona.context_window
+                    session, group.id, persona.context_window,
+                    after_message_id=last_msg_id,
                 )
 
-            reply = await generate_reply(persona, context_messages)
+            reply = await generate_reply(persona, context_messages, summary_context=summary_text or "")
             if reply is None:
                 logger.warning("Auto-message skipped for group %d — Claude returned None", group.telegram_id)
                 continue
@@ -66,6 +71,7 @@ async def send_auto_message(application) -> None:
                 )
 
             logger.info("Auto-message sent to group %d", group.telegram_id)
+            asyncio.create_task(maybe_generate_summary(group.id, group.telegram_id))
 
         except Exception as e:
             logger.warning("Auto-message failed for group %d: %s", group.telegram_id, e)

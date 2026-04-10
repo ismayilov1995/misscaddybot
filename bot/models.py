@@ -23,6 +23,7 @@ class Group(Base):
     persona: Mapped["Persona"] = relationship("Persona", back_populates="group", uselist=False)
     messages: Mapped[list["Message"]] = relationship("Message", back_populates="group")
     memories: Mapped[list["GroupMemory"]] = relationship("GroupMemory", back_populates="group")
+    summaries: Mapped[list["GroupSummary"]] = relationship("GroupSummary", back_populates="group")
 
 
 class Persona(Base):
@@ -62,6 +63,18 @@ class Message(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     group: Mapped["Group"] = relationship("Group", back_populates="messages")
+
+
+class GroupSummary(Base):
+    __tablename__ = "group_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    last_message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    group: Mapped["Group"] = relationship("Group", back_populates="summaries")
 
 
 class GroupMemory(Base):
