@@ -47,6 +47,12 @@ async def send_auto_message(application) -> None:
                     after_message_id=last_msg_id,
                 )
 
+                min_context = 5
+                if len(context_messages) < min_context:
+                    context_messages = await get_context_messages(
+                        session, group.id, min_context,
+                    )
+
             reply = await generate_reply(persona, context_messages, summary_context=summary_text or "")
             if reply is None:
                 logger.warning("Auto-message skipped for group %d — Claude returned None", group.telegram_id)

@@ -176,6 +176,13 @@ async def reply_to_mention(
             after_message_id=last_msg_id,
         )
 
+        # Ensure minimum context — if too few messages after summary, fetch more
+        min_context = 5
+        if len(context_messages) < min_context:
+            context_messages = await get_context_messages(
+                session, group.id, min_context,
+            )
+
         from bot.memory import get_memory_context, maybe_update_memory
         memory_context = await get_memory_context(session, group.id, context_messages)
 
