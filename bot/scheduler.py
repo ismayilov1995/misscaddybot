@@ -40,18 +40,15 @@ async def send_auto_message(application) -> None:
         try:
             async with AsyncSessionLocal() as session:
                 from bot.summary import get_latest_summary, maybe_generate_summary
-                summary_text, last_msg_id = await get_latest_summary(session, group.id)
+
+                # Always fetch the full context_window of real messages.
+                # Summary is passed as background context only, not as a
+                # replacement for real message history.
+                summary_text, _ = await get_latest_summary(session, group.id)
 
                 context_messages = await get_context_messages(
                     session, group.id, persona.context_window,
-                    after_message_id=last_msg_id,
                 )
-
-                min_context = 8
-                if len(context_messages) < min_context:
-                    context_messages = await get_context_messages(
-                        session, group.id, min_context,
-                    )
 
             reply = await generate_reply(persona, context_messages, summary_context=summary_text or "")
             if reply is None:

@@ -169,19 +169,16 @@ async def reply_to_mention(
 
     async with AsyncSessionLocal() as session:
         from bot.summary import get_latest_summary, maybe_generate_summary
-        summary_text, last_msg_id = await get_latest_summary(session, group.id)
+
+        # Always fetch the full context_window of real messages so the bot
+        # sees actual conversation history with member names, jokes and tone.
+        # The summary is kept for background context only — it does NOT replace
+        # real messages in the conversation window.
+        summary_text, _ = await get_latest_summary(session, group.id)
 
         context_messages = await get_context_messages(
             session, group.id, persona.context_window,
-            after_message_id=last_msg_id,
         )
-
-        # Ensure minimum context — if too few messages after summary, fetch more
-        min_context = 8
-        if len(context_messages) < min_context:
-            context_messages = await get_context_messages(
-                session, group.id, min_context,
-            )
 
         from bot.memory import get_memory_context, maybe_update_memory
         memory_context = await get_memory_context(session, group.id, context_messages)
