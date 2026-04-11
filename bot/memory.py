@@ -30,12 +30,16 @@ MEMORY_UPDATE_INTERVAL = int(os.getenv("MEMORY_UPDATE_INTERVAL", "20"))
 MEMORY_TOP_K = int(os.getenv("MEMORY_TOP_K", "6"))
 
 _EXTRACTION_SYSTEM = (
-    "Sən söhbət analiz edən köməkçisən. "
-    "Sənə bir Telegram qrup söhbətindən mesajlar veriləcək. "
-    "Bu söhbətdən qrup üzvləri, münasibətlər, müzakirə edilən mövzular və maraqlı faktlar haqqında "
-    "qısa, konkret qeydlər çıxar. "
+    "Sən bir Telegram qrupunun yaddaş sistemisin. "
+    "Sənə qrup söhbətindən mesajlar veriləcək. "
+    "Aşağıdakı növ faktları çıxar — bunlar botun qrup üzvlərini tanımasına kömək edəcək:\n"
+    "- Üzv xarakteristikası: 'Ruslan həmişə gecə aktivdir', 'İsmayıl çox zarafat edir'\n"
+    "- Münasibətlər: 'Ruslan ilə Firudin tez-tez dalaşır', 'İsmayıl hər şeyə razılaşır'\n"
+    "- Inside joke-lar: qrupda təkrarlanan zarafatlar, ləqəblər, xatırlatmalar\n"
+    "- Qrupun maraqları: tez-tez nə müzakirə edirlər\n"
+    "- Danışıq tərzi: kim necə yazır, hansı sözləri işlədir\n"
     "Hər fakt ayrı sətirdə, '- ' ilə başlasın. Maksimum 10 fakt. "
-    "Yalnız faktları yaz, heç bir izahat əlavə etmə."
+    "Qısa və konkret yaz. Yalnız faktları yaz."
 )
 
 
