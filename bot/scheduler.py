@@ -47,7 +47,7 @@ async def send_auto_message(application) -> None:
                     after_message_id=last_msg_id,
                 )
 
-                min_context = 5
+                min_context = 8
                 if len(context_messages) < min_context:
                     context_messages = await get_context_messages(
                         session, group.id, min_context,
