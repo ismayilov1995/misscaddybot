@@ -50,7 +50,25 @@ async def send_auto_message(application) -> None:
                     session, group.id, persona.context_window,
                 )
 
-            reply = await generate_reply(persona, context_messages, summary_context=summary_text or "")
+            # 20% chance: conversation starter — longer, topic-opening message
+            is_conversation_starter = random.random() < 0.20
+            if is_conversation_starter:
+                starter_hint = (
+                    "İndi söhbətə yeni mövzu aç. Maraqlı bir şey paylaş, sual soruş, "
+                    "fikir bildir — qrupdakıların cavab vermək istəyəcəyi bir şey olsun. "
+                    "Qrupun maraqlarına və əvvəlki söhbətlərə uyğun mövzu seç. "
+                    "Təbii yaz, sanki ağlına gəldi."
+                )
+                reply = await generate_reply(
+                    persona, context_messages,
+                    memory_context=starter_hint,
+                    summary_context=summary_text or "",
+                    max_tokens=500,
+                )
+                logger.info("Conversation starter sent to group %d", group.telegram_id)
+            else:
+                reply = await generate_reply(persona, context_messages, summary_context=summary_text or "")
+
             if reply is None:
                 logger.warning("Auto-message skipped for group %d — Claude returned None", group.telegram_id)
                 continue

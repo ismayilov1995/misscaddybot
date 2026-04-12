@@ -1,6 +1,7 @@
 # bot/ai.py
 import logging
 import os
+import random
 
 from bot.models import Persona
 
@@ -28,7 +29,8 @@ def build_system_prompt(
         "Bu, yaxın dostların olan bir Telegram qrupudur. "
         "Hamını tanıyırsan, hamı səni tanıyır. "
         "Söhbət dostlar arasında gedir — rahat, sərbəst, gündəlik.\n\n"
-        "Cavabların qısa olsun — 1-2 cümlə kifayətdir. "
+        "Cavabların adətən qısa olsun — 1-3 cümlə. Amma mövzu maraqlıdırsa, "
+        "daha ətraflı yaz, sual soruş, fikir bildir — normal söhbət kimi. "
         "Heç vaxt siyahı, başlıq, rəsmi dil işlətmə. "
         "Özünü heç vaxt bot və ya AI kimi təqdim etmə — kimsə soruşsa zarafatla yan keç. "
         "Söhbətin tonuna uy: ciddi mövzuda ciddi ol, yüngül mövzuda rahat. "
@@ -51,18 +53,23 @@ async def generate_reply(
     context_messages: list[dict],
     memory_context: str = "",
     summary_context: str = "",
+    max_tokens: int | None = None,
 ) -> str | None:
     """
     Call the configured AI provider and return the reply text, or None on recoverable error.
 
     Provider is selected by AI_PROVIDER env var ("openai" or "anthropic", default: "openai").
     Model is selected by AI_MODEL env var.
+    max_tokens: override for response length. If None, randomly chosen between 150-450.
     """
+    if max_tokens is None:
+        max_tokens = random.randint(150, 450)
+
     if _AI_PROVIDER == "anthropic":
-        return await _generate_anthropic(persona, context_messages, memory_context, summary_context)
+        return await _generate_anthropic(persona, context_messages, memory_context, summary_context, max_tokens)
     if _AI_PROVIDER == "grok":
-        return await _generate_grok(persona, context_messages, memory_context, summary_context)
-    return await _generate_openai(persona, context_messages, memory_context, summary_context)
+        return await _generate_grok(persona, context_messages, memory_context, summary_context, max_tokens)
+    return await _generate_openai(persona, context_messages, memory_context, summary_context, max_tokens)
 
 
 async def _generate_openai(
@@ -70,6 +77,7 @@ async def _generate_openai(
     context_messages: list[dict],
     memory_context: str = "",
     summary_context: str = "",
+    max_tokens: int = 300,
 ) -> str | None:
     """OpenAI (ChatGPT) backend. Reads OPENAI_API_KEY from env."""
     try:
@@ -87,7 +95,7 @@ async def _generate_openai(
     try:
         response = await client.chat.completions.create(
             model=model,
-            max_tokens=150,
+            max_tokens=max_tokens,
             messages=messages,
         )
         return response.choices[0].message.content
@@ -107,6 +115,7 @@ async def _generate_grok(
     context_messages: list[dict],
     memory_context: str = "",
     summary_context: str = "",
+    max_tokens: int = 300,
 ) -> str | None:
     """xAI Grok backend. Reads XAI_API_KEY from env. Uses OpenAI-compatible API."""
     try:
@@ -127,7 +136,7 @@ async def _generate_grok(
     try:
         response = await client.chat.completions.create(
             model=model,
-            max_tokens=150,
+            max_tokens=max_tokens,
             messages=messages,
         )
         return response.choices[0].message.content
@@ -147,6 +156,7 @@ async def _generate_anthropic(
     context_messages: list[dict],
     memory_context: str = "",
     summary_context: str = "",
+    max_tokens: int = 300,
 ) -> str | None:
     """Anthropic (Claude) backend. Reads ANTHROPIC_API_KEY from env."""
     try:
@@ -162,7 +172,7 @@ async def _generate_anthropic(
     try:
         response = await client.messages.create(
             model=model,
-            max_tokens=150,
+            max_tokens=max_tokens,
             system=[
                 {
                     "type": "text",
