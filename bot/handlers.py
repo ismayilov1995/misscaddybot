@@ -265,10 +265,6 @@ async def handle_message(
             sent_at,
         )
 
-    # Trigger summary check on every message (not just bot replies)
-    from bot.summary import maybe_generate_summary
-    asyncio.create_task(maybe_generate_summary(group.id, group.telegram_id))
-
     if is_mentioned(message, context.bot.username, persona.name, context.bot.id):
         logger.info("Mention detected in group %d — spawning reply task", chat_id)
         asyncio.create_task(reply_to_mention(update, context, group, persona))

@@ -21,7 +21,8 @@ from bot.models import GroupSummary, Message
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_INTERVAL = int(os.getenv("SUMMARY_INTERVAL", "15"))
+# Minimum new messages before generating a summary (avoids summarizing 1-2 messages)
+MIN_MESSAGES_FOR_SUMMARY = int(os.getenv("MIN_MESSAGES_FOR_SUMMARY", "3"))
 
 _SUMMARY_SYSTEM = (
     "Sən bir Telegram qrupunun daimi üzvüsən və qrupun söhbət yaddaşını saxlayırsan. "
@@ -80,7 +81,10 @@ async def maybe_generate_summary(
     telegram_id: int,
 ) -> None:
     """
-    Generate a rolling summary if enough messages accumulated since the last one.
+    Generate a rolling summary of all messages since the last summary.
+
+    Called when the bot is tagged or sends an auto-message — not on every
+    incoming message, so there is no per-message DB overhead.
 
     Opens its own DB session — safe to call as asyncio.create_task().
     """
@@ -96,7 +100,7 @@ async def maybe_generate_summary(
 
         count = (await session.execute(query)).scalar() or 0
 
-        if count < SUMMARY_INTERVAL:
+        if count < MIN_MESSAGES_FOR_SUMMARY:
             return
 
         logger.info(
