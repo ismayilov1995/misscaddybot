@@ -193,15 +193,40 @@ async def reply_to_mention(
         if reply is None:
             return
 
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        delay = random.uniform(1, 4) + min(len(reply) * 0.04, 8)
-        await asyncio.sleep(delay)
+        # Decide: voice or text?
+        from bot.tts import should_send_voice, text_to_voice
+        send_as_voice = should_send_voice()
 
-        sent_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=reply,
-            reply_to_message_id=reply_to_message_id,
-        )
+        if send_as_voice:
+            await context.bot.send_chat_action(
+                chat_id=chat_id, action=ChatAction.RECORD_VOICE
+            )
+            voice_buf = await text_to_voice(reply)
+        else:
+            voice_buf = None
+
+        if not send_as_voice or voice_buf is None:
+            # Text reply (default or voice generation failed)
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            delay = random.uniform(1, 4) + min(len(reply) * 0.04, 8)
+            await asyncio.sleep(delay)
+
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=reply,
+                reply_to_message_id=reply_to_message_id,
+            )
+        else:
+            # Voice reply
+            delay = random.uniform(1, 3)
+            await asyncio.sleep(delay)
+
+            sent_msg = await context.bot.send_voice(
+                chat_id=chat_id,
+                voice=voice_buf,
+                reply_to_message_id=reply_to_message_id,
+            )
+            logger.info("Voice reply sent in group %d", group.telegram_id)
 
         await save_message(
             session,
