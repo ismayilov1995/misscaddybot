@@ -204,7 +204,7 @@ async def reply_to_mention(
             await context.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.RECORD_VOICE
             )
-            voice_buf = await text_to_voice(reply)
+            voice_buf = await text_to_voice(reply, persona_bio=persona.bio)
         else:
             voice_buf = None
 
