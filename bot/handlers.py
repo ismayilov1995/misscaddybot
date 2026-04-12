@@ -149,9 +149,12 @@ async def reply_to_mention(
     context: ContextTypes.DEFAULT_TYPE,
     group: Group,
     persona: Persona,
+    reply_to_message_id: int | None = None,
+    extra_memory: str = "",
 ) -> None:
     """
-    Full reactive reply loop — called as a background task when a mention is detected.
+    Full reactive reply loop — called as a background task when a mention is detected
+    or during a follow-up conversation.
 
     Steps:
       1. Fetch recent context messages from DB
@@ -159,7 +162,7 @@ async def reply_to_mention(
       3. If None (API error) → return silently, no message sent
       4. Send typing indicator
       5. Sleep for realistic human-like delay (base 1–4s + length-scaled)
-      6. Send reply to chat
+      6. Send reply to chat (optionally as a reply to a specific message)
       7. Save bot's outgoing message to DB
     """
     from bot.database import AsyncSessionLocal
@@ -170,10 +173,6 @@ async def reply_to_mention(
     async with AsyncSessionLocal() as session:
         from bot.summary import get_latest_summary, maybe_generate_summary
 
-        # Always fetch the full context_window of real messages so the bot
-        # sees actual conversation history with member names, jokes and tone.
-        # The summary is kept for background context only — it does NOT replace
-        # real messages in the conversation window.
         summary_text, _ = await get_latest_summary(session, group.id)
 
         context_messages = await get_context_messages(
@@ -182,6 +181,9 @@ async def reply_to_mention(
 
         from bot.memory import get_memory_context, maybe_update_memory
         memory_context = await get_memory_context(session, group.id, context_messages)
+
+        if extra_memory:
+            memory_context = f"{memory_context}\n\n{extra_memory}" if memory_context else extra_memory
 
         reply = await generate_reply(
             persona, context_messages,
@@ -195,7 +197,11 @@ async def reply_to_mention(
         delay = random.uniform(1, 4) + min(len(reply) * 0.04, 8)
         await asyncio.sleep(delay)
 
-        sent_msg = await context.bot.send_message(chat_id=chat_id, text=reply)
+        sent_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=reply,
+            reply_to_message_id=reply_to_message_id,
+        )
 
         await save_message(
             session,
@@ -206,12 +212,124 @@ async def reply_to_mention(
             sender_username=context.bot.username,
             text=reply,
             is_bot=True,
-            replied_to_id=None,
+            replied_to_id=reply_to_message_id,
             sent_at=sent_msg.date,
         )
 
     asyncio.create_task(maybe_update_memory(group, context_messages))
     asyncio.create_task(maybe_generate_summary(group.id, group.telegram_id))
+
+
+async def maybe_follow_up(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    group: Group,
+    persona: Persona,
+) -> None:
+    """
+    Sometimes continue a conversation without being tagged — like a real person.
+
+    Checks if the bot sent a message within the last 5 messages.
+    If yes, 25% chance to follow up with a reply to the current message.
+    """
+    from bot.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        # Get last 5 messages to check if bot was recently active
+        result = await session.execute(
+            select(Message.is_bot, Message.telegram_message_id)
+            .where(Message.group_id == group.id)
+            .order_by(Message.sent_at.desc())
+            .limit(5)
+        )
+        recent = result.all()
+
+    if not recent:
+        return
+
+    # Was the bot active in the last 5 messages?
+    bot_was_recent = any(row.is_bot for row in recent)
+    if not bot_was_recent:
+        return
+
+    # 25% chance to follow up
+    if random.random() > 0.25:
+        return
+
+    logger.info("Follow-up triggered in group %d", group.telegram_id)
+
+    follow_up_hint = (
+        "Sən bu söhbətdə artıq aktivsən. Kimsə bir şey yazıb — "
+        "əgər mövzu sənin üçün maraqlıdırsa və ya sənə aid bir şey deyilibsə, "
+        "təbii şəkildə cavab ver. Əgər mövzu sənə aid deyilsə, cavab vermə — "
+        "sadəcə boş sətir qaytar."
+    )
+
+    reply = await _try_follow_up_reply(
+        update, context, group, persona, follow_up_hint
+    )
+
+
+async def _try_follow_up_reply(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    group: Group,
+    persona: Persona,
+    follow_up_hint: str,
+) -> None:
+    """Generate a follow-up reply; skip if AI returns empty/irrelevant."""
+    from bot.database import AsyncSessionLocal
+    from bot.ai import generate_reply
+    from bot.summary import get_latest_summary
+
+    chat_id = update.effective_message.chat_id
+    trigger_message_id = update.effective_message.message_id
+
+    async with AsyncSessionLocal() as session:
+        summary_text, _ = await get_latest_summary(session, group.id)
+
+        context_messages = await get_context_messages(
+            session, group.id, persona.context_window,
+        )
+
+        from bot.memory import get_memory_context
+        memory_context = await get_memory_context(session, group.id, context_messages)
+        memory_context = f"{memory_context}\n\n{follow_up_hint}" if memory_context else follow_up_hint
+
+        reply = await generate_reply(
+            persona, context_messages,
+            memory_context=memory_context,
+            summary_context=summary_text or "",
+        )
+
+        # Skip if AI returned nothing useful
+        if not reply or reply.strip() == "" or len(reply.strip()) < 3:
+            return
+
+        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        delay = random.uniform(2, 6) + min(len(reply) * 0.04, 8)
+        await asyncio.sleep(delay)
+
+        sent_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=reply,
+            reply_to_message_id=trigger_message_id,
+        )
+
+        await save_message(
+            session,
+            group_id=group.id,
+            telegram_message_id=sent_msg.message_id,
+            sender_id=context.bot.id,
+            sender_name=persona.name,
+            sender_username=context.bot.username,
+            text=reply,
+            is_bot=True,
+            replied_to_id=trigger_message_id,
+            sent_at=sent_msg.date,
+        )
+
+    logger.info("Follow-up reply sent in group %d", group.telegram_id)
 
 
 async def handle_message(
@@ -268,6 +386,11 @@ async def handle_message(
     if is_mentioned(message, context.bot.username, persona.name, context.bot.id):
         logger.info("Mention detected in group %d — spawning reply task", chat_id)
         asyncio.create_task(reply_to_mention(update, context, group, persona))
+    else:
+        # Follow-up: if bot was active recently, sometimes continue the conversation
+        asyncio.create_task(
+            maybe_follow_up(update, context, group, persona)
+        )
 
 
 async def handle_bot_added(
