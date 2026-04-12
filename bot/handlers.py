@@ -198,7 +198,7 @@ async def reply_to_mention(
         from bot.tts import should_send_voice, text_to_voice
         msg_text = (update.effective_message.text or "").lower()
         force_voice = any(kw in msg_text for kw in ("səslə", "sesle", "voice"))
-        send_as_voice = force_voice or should_send_voice()
+        send_as_voice = force_voice or should_send_voice(persona.voice_chance)
 
         if send_as_voice:
             await context.bot.send_chat_action(

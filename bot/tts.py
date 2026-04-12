@@ -32,8 +32,15 @@ _VOICE_FEMALE = "az-AZ-BanuNeural"
 _VOICE_MALE = "az-AZ-BabekNeural"
 
 
-def should_send_voice() -> bool:
-    """Return True with VOICE_CHANCE probability."""
+def should_send_voice(persona_voice_chance: int | None = None) -> bool:
+    """
+    Return True with the given probability.
+
+    persona_voice_chance: percentage (0-100) from persona DB field.
+    Falls back to VOICE_CHANCE env var if not provided.
+    """
+    if persona_voice_chance is not None:
+        return random.random() < (persona_voice_chance / 100.0)
     return random.random() < VOICE_CHANCE
 
 

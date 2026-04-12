@@ -90,7 +90,7 @@
       </div>
 
       <!-- Settings row -->
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-4 gap-4">
         <div>
           <label class="block text-sm text-gray-400 mb-1.5">Auto mesaj min (dəq)</label>
           <input name="auto_message_interval_min" type="number"
@@ -111,6 +111,16 @@
                  value="{{ persona.context_window if persona else 20 }}"
                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
                         focus:outline-none focus:border-indigo-500 transition" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">Səs mesaj şansı (%)</label>
+          <select name="voice_chance"
+                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                         focus:outline-none focus:border-indigo-500 transition">
+            {% for val in [0, 5, 8, 10, 15, 20, 30] %}
+            <option value="{{ val }}" {% if persona and persona.voice_chance == val %}selected{% endif %}>{{ val }}%</option>
+            {% endfor %}
+          </select>
         </div>
       </div>
 

@@ -403,6 +403,7 @@ async def update_persona(
     auto_message_interval_min: int = Form(...),
     auto_message_interval_max: int = Form(...),
     context_window: int = Form(...),
+    voice_chance: int = Form(8),
     _=Depends(get_current_user),
 ):
     async with AsyncSessionLocal() as session:
@@ -418,6 +419,7 @@ async def update_persona(
             persona.auto_message_interval_min = auto_message_interval_min
             persona.auto_message_interval_max = auto_message_interval_max
             persona.context_window = context_window
+            persona.voice_chance = voice_chance
             # Store gender in bio prefix if provided
             if gender and not persona.bio.startswith(f"[{gender}]"):
                 persona.bio = f"[{gender}] {bio}"
