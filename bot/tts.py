@@ -1,26 +1,26 @@
 # bot/tts.py
 """
-Text-to-Speech via OpenAI TTS API.
+Text-to-Speech via Microsoft Edge TTS.
 
-Generates OGG/OPUS audio suitable for Telegram voice messages.
-Uses OPENAI_API_KEY (same key used for embeddings).
+Generates MP3 audio suitable for Telegram voice messages.
+Free — no API key required. Native Azerbaijani voices.
 
 Env vars:
-  TTS_MODEL   — "tts-1" (fast/cheap) or "tts-1-hd" (quality). Default: tts-1
-  TTS_VOICE   — alloy, echo, fable, onyx, nova, shimmer. Default: nova
-  VOICE_CHANCE — probability of sending voice instead of text (0.0–1.0). Default: 0.15
+  TTS_VOICE    — Edge TTS voice name. Default: az-AZ-BanuNeural (Azerbaijani female)
+                 Other options: az-AZ-BabekNeural (male), or any Edge TTS voice
+  VOICE_CHANCE — probability of sending voice instead of text (0.0–1.0). Default: 0.08
 """
 
 import io
 import logging
 import os
 import random
+import tempfile
 
 logger = logging.getLogger(__name__)
 
-TTS_MODEL = os.getenv("TTS_MODEL", "tts-1")
-TTS_VOICE = os.getenv("TTS_VOICE", "nova")
-VOICE_CHANCE = float(os.getenv("VOICE_CHANCE", "0.15"))
+TTS_VOICE = os.getenv("TTS_VOICE", "az-AZ-BanuNeural")
+VOICE_CHANCE = float(os.getenv("VOICE_CHANCE", "0.08"))
 
 
 def should_send_voice() -> bool:
@@ -30,30 +30,31 @@ def should_send_voice() -> bool:
 
 async def text_to_voice(text: str) -> io.BytesIO | None:
     """
-    Convert text to OGG/OPUS audio using OpenAI TTS.
+    Convert text to audio using Edge TTS (Microsoft).
 
     Returns a BytesIO buffer ready for Telegram send_voice, or None on error.
-    The buffer's name is set to 'voice.ogg' for Telegram compatibility.
     """
     try:
-        import openai
+        import edge_tts
     except ImportError:
-        logger.error("openai package not installed — cannot generate voice")
+        logger.error("edge-tts package not installed — run: pip install edge-tts")
         return None
 
-    # Use OPENAI_API_KEY (same as embedding provider)
-    client = openai.AsyncOpenAI()
-
     try:
-        response = await client.audio.speech.create(
-            model=TTS_MODEL,
-            voice=TTS_VOICE,
-            input=text,
-            response_format="opus",
-        )
+        communicate = edge_tts.Communicate(text, TTS_VOICE)
 
-        buffer = io.BytesIO(response.content)
-        buffer.name = "voice.ogg"
+        # edge-tts writes to a file, so use a temp file then read into buffer
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=True) as tmp:
+            await communicate.save(tmp.name)
+            tmp.seek(0)
+            data = tmp.read()
+
+        if not data:
+            logger.warning("Edge TTS returned empty audio")
+            return None
+
+        buffer = io.BytesIO(data)
+        buffer.name = "voice.mp3"
         buffer.seek(0)
         return buffer
 
