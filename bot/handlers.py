@@ -220,6 +220,77 @@ async def reply_to_mention(
     asyncio.create_task(maybe_generate_summary(group.id, group.telegram_id))
 
 
+_TEACH_KEYWORDS = ("yadda saxla", "yaddasaxla", "yaddaş:", "yaddash:", "remember:")
+
+
+def _extract_teach_fact(text: str, persona_name: str, bot_username: str) -> str | None:
+    """
+    Extract fact from a teach command like:
+      '@bot yadda saxla Kick Ruslandır'
+      'Fidan yaddasaxla Mədə = Heydər'
+
+    Returns the fact string, or None if this isn't a teach command.
+    """
+    lower = text.lower()
+
+    for keyword in _TEACH_KEYWORDS:
+        idx = lower.find(keyword)
+        if idx == -1:
+            continue
+        # Extract everything after the keyword
+        fact = text[idx + len(keyword):].strip()
+        if fact:
+            return fact
+
+    return None
+
+
+async def _handle_teach(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    group: Group,
+    fact: str,
+) -> None:
+    """Store a fact directly in GroupMemory and confirm."""
+    from bot.database import AsyncSessionLocal
+    from bot.memory import get_embedding
+    from bot.models import GroupMemory
+
+    async with AsyncSessionLocal() as session:
+        embedding = await get_embedding(fact)
+
+        # Skip near-duplicate if embeddings available
+        if embedding is not None:
+            from sqlalchemy import select as sa_select
+            result = await session.execute(
+                sa_select(GroupMemory.id).where(
+                    GroupMemory.group_id == group.id,
+                    GroupMemory.embedding.cosine_distance(embedding) < 0.08,
+                ).limit(1)
+            )
+            if result.scalar_one_or_none() is not None:
+                await context.bot.send_message(
+                    chat_id=update.effective_message.chat_id,
+                    text="Bunu artıq bilirəm 👍",
+                    reply_to_message_id=update.effective_message.message_id,
+                )
+                return
+
+        session.add(GroupMemory(
+            group_id=group.id,
+            fact=fact,
+            embedding=embedding,
+        ))
+        await session.commit()
+
+    await context.bot.send_message(
+        chat_id=update.effective_message.chat_id,
+        text=f"Yadda saxladım 👍",
+        reply_to_message_id=update.effective_message.message_id,
+    )
+    logger.info("Taught fact for group %d: %s", group.telegram_id, fact[:80])
+
+
 async def maybe_follow_up(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -384,8 +455,16 @@ async def handle_message(
         )
 
     if is_mentioned(message, context.bot.username, persona.name, context.bot.id):
-        logger.info("Mention detected in group %d — spawning reply task", chat_id)
-        asyncio.create_task(reply_to_mention(update, context, group, persona))
+        # Check for quick-teach command first
+        teach_fact = _extract_teach_fact(message.text, persona.name, context.bot.username)
+        if teach_fact:
+            logger.info("Teach command in group %d: %s", chat_id, teach_fact[:60])
+            asyncio.create_task(
+                _handle_teach(update, context, group, teach_fact)
+            )
+        else:
+            logger.info("Mention detected in group %d — spawning reply task", chat_id)
+            asyncio.create_task(reply_to_mention(update, context, group, persona))
     else:
         # Follow-up: if bot was active recently, sometimes continue the conversation
         asyncio.create_task(
