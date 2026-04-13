@@ -1,6 +1,6 @@
 # MissCaddyBot
 
-> A Telegram group bot that feels like a real member — context-aware replies, autonomous messaging, and a fully customizable AI persona, powered by Claude, ChatGPT, or Grok.
+> A Telegram group bot that feels like a real member — context-aware replies, autonomous messaging, voice messages, emoji reactions, and a fully customizable AI persona, powered by Claude, ChatGPT, or Grok.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://core.telegram.org/bots)
@@ -12,9 +12,9 @@
 
 ## What Is It?
 
-MissCaddyBot joins your Telegram group and participates like a real person. It reads every message, responds when mentioned or replied to, and even sends unprompted messages on its own schedule — all in your group's native language and tone.
+MissCaddyBot joins your Telegram group and participates like a real person. It reads every message, responds when mentioned or replied to, reacts with emojis, occasionally sends voice messages, and even fires off unprompted messages on its own schedule — all in your group's native language and tone.
 
-The bot is built around a configurable **persona**: a name, background story, personality traits, and language style. It maintains a persistent memory of the group's conversations across restarts, and an admin web dashboard lets you tune everything without touching the database directly.
+The bot is built around a configurable **persona**: a name, background story, personality traits, and language style. It maintains a layered memory of the group's conversations (short-term summaries, medium-term meta-summaries, and long-term vector facts) across restarts. An admin web dashboard lets you tune everything without touching the database.
 
 Originally built for a small Azerbaijani-speaking group, but works for any language or culture.
 
@@ -22,18 +22,50 @@ Originally built for a small Azerbaijani-speaking group, but works for any langu
 
 ## Features
 
-- **Mention & Reply Detection** — responds to `@username` tags, persona name mentions, and direct replies to its own messages
-- **Context-Aware Replies** — fetches the last N messages and passes full conversation history to the AI model
-- **Autonomous Messaging** — sends spontaneous messages on a randomized interval (configurable per group)
-- **Persistent Memory** — saves all messages to PostgreSQL; memory survives bot restarts
-- **Vector Memory Search** — extracts and embeds facts from conversations using pgvector for relevant context retrieval
-- **Rolling Summaries** — automatically summarises older conversation chunks to keep token usage low
-- **Prompt Caching** — caches system prompts via the Anthropic API, cutting effective token cost by ~10x
-- **Multi-Provider AI** — switch between Anthropic Claude, OpenAI ChatGPT, or xAI Grok via a single env var
-- **Per-Group Personas** — each group gets its own persona with individual settings and memory
-- **Admin Dashboard** — FastAPI web UI for managing groups, editing personas, and viewing statistics
-- **Auto-Seeding** — automatically creates a Group and Persona record when added to a new group
-- **Human-Like Delays** — typing delay scaled to response length before sending
+### 🧠 Intelligence & Memory
+- **Mention & Reply Detection** — responds to `@username` tags, persona name mentions, and direct replies
+- **Context-Aware Replies** — fetches the last N messages and passes full conversation history to the AI
+- **Hierarchical Rolling Summaries** — two-level summary system:
+  - **L1** (short-term): summaries of recent message batches, two sections: group portrait + recent events
+  - **L2** (medium-term): meta-summary generated every 4 L1s — captures deep group dynamics over time
+- **Vector Memory** — extracts and embeds facts from conversations (pgvector) for semantic retrieval
+- **Quick-Teach** — store facts directly via chat: `@bot yadda saxla Kick = Ruslandır`
+- **Prompt Caching** — caches system prompts via Anthropic API, cutting token cost ~10x
+
+### 🎭 Human-Like Behaviour
+- **Emoji Reactions** — reacts to ~12% of all messages (contextual: 😂 for funny, 🔥 for cool, 🤔 for questions) without typing a reply
+- **Message Splitting** — 28% of replies are broken into 2–3 short messages with natural typing gaps, sometimes prefixed with "hə", "bir dəq", "aha"
+- **Delayed Replies** — 7% chance to "miss" a mention and reply 5–45 min later with "Bağışla indi gördüm"
+- **Circadian Rhythm** — shorter replies and sleepier tone at night (1–7 AM), peak energy in afternoon
+- **Typos & Self-Correction** — 8% chance to introduce a realistic keyboard typo followed by a correction
+- **Follow-Up Conversations** — 25% chance to continue active conversations without being tagged
+- **Conversation Starters** — 20% of auto-messages open a new topic organically
+- **Dynamic Response Length** — max tokens randomised 150–450 (or 40–120 at night, 200–500 at peak)
+- **Human-Like Typing Delay** — delay scaled to response length before sending
+
+### 🎙️ Voice Messages
+- **Edge TTS** — free Microsoft neural voices via `edge-tts`, no API cost
+- **Native Azerbaijani Voices** — `az-AZ-BanuNeural` (female) and `az-AZ-BabekNeural` (male)
+- **Gender-Aware Selection** — detects `[Qadın]` / `[Kişi]` prefix in persona bio
+- **Prosody Randomisation** — randomised rate (−5% to +10%) and pitch (−3Hz to +5Hz) per message
+- **Configurable Chance** — voice chance set per persona from dashboard (0–30%)
+- **Force Voice** — send "səslə", "sesle", or "voice" in your message to force a voice reply
+
+### 🤖 Multi-Provider AI
+- **Supported Providers** — Anthropic Claude, OpenAI ChatGPT, xAI Grok
+- **Automatic Grok-3 Fallback** — if the primary AI refuses content (content-policy refusal detected in az/en/ru), automatically retries with Grok-3 (full model, most permissive)
+- **Per-Group Language** — choose bot reply language per group: 🇦🇿 Azerbaijani / 🇷🇺 Russian / 🇬🇧 English
+
+### 📊 Autonomous Messaging
+- **Scheduled Auto-Messages** — sends spontaneous messages on a configurable randomised interval per group
+- **Per-Group Intervals** — min/max configurable from dashboard (default 45–180 min)
+
+### 🖥️ Admin Dashboard
+- **Persona Editor** — name, bio, personality, language style, voice chance, reply language
+- **Preset Templates** — quick-apply pre-built persona configs (Elon, Trump, Joe Rogan, Nicat)
+- **Group Statistics** — message counts, member activity, temporal patterns
+- **Character Analysis** — deep AI-powered persona analysis: context pairs, typology, trends, vector facts
+- **Member Analysis** — per-member character analysis from conversation history
 
 ---
 
@@ -44,7 +76,8 @@ Originally built for a small Azerbaijani-speaking group, but works for any langu
 | Language | Python 3.11+ |
 | Telegram Client | python-telegram-bot v21 (async) |
 | AI Providers | Anthropic Claude, OpenAI, xAI Grok |
-| Default Model | `claude-haiku-4-5-20251001` (cost-optimised) |
+| Fallback Model | Grok-3 (automatic on refusal) |
+| TTS | edge-tts (Microsoft Azure Neural, free) |
 | Database | PostgreSQL 16 |
 | ORM | SQLAlchemy 2.0 async + asyncpg |
 | Vector Search | pgvector |
@@ -59,41 +92,47 @@ Originally built for a small Azerbaijani-speaking group, but works for any langu
 
 ```
 Telegram Group
-      │
+      │  (messages, reactions)
       ▼
-┌─────────────────────────────────────────────┐
-│              python-telegram-bot             │
-│         (async update handler loop)          │
-└───────────┬─────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                  python-telegram-bot                     │
+│              (async update handler loop)                 │
+└───────────┬─────────────────────────────────────────────┘
             │ message events
             ▼
-┌─────────────────────────────────────────────┐
-│                 handlers.py                  │
-│  • Save message to DB                        │
-│  • Detect mention / reply trigger            │
-│  • Fetch context window from DB              │
-│  • Call AI provider                          │
-│  • Human-like typing delay                   │
-│  • Send reply + save bot message to DB       │
-└───────┬───────────────────────┬─────────────┘
-        │                       │
-        ▼                       ▼
-┌───────────────┐     ┌─────────────────────┐
-│  PostgreSQL   │     │     ai.py            │
-│  • messages   │     │  Multi-provider:     │
-│  • personas   │     │  Claude / GPT / Grok │
-│  • summaries  │     │  + prompt caching    │
-│  • memories   │     └─────────────────────┘
-│  (pgvector)   │
-└───────────────┘
-        ▲
-        │
-┌───────────────────┐       ┌──────────────────────┐
-│   scheduler.py    │       │   dashboard/app.py    │
-│  • Auto-messages  │       │   FastAPI web UI      │
-│  • Memory updates │       │   Persona editor      │
-│  • Summaries      │       │   Group stats         │
-└───────────────────┘       └──────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                     handlers.py                          │
+│  • Save message to DB                                    │
+│  • Emoji reaction (12% of all messages, async)           │
+│  • Detect mention / reply / teach command                │
+│  • Delayed reply decision (7% chance)                    │
+│  • Fetch context window + summary context + memory       │
+│  • Circadian mood hint + token adjustment                │
+│  • Call AI provider (with Grok-3 fallback)               │
+│  • Multi-message split (28%) + typo injection (8%)       │
+│  • Human-like typing delay → send reply                  │
+│  • Save bot message to DB                                │
+│  • Async: update memory + generate summary               │
+└───────┬────────────────────────────┬────────────────────┘
+        │                            │
+        ▼                            ▼
+┌───────────────┐          ┌─────────────────────────────┐
+│  PostgreSQL   │          │          ai.py               │
+│  • messages   │          │  Primary: Claude/GPT/Grok    │
+│  • personas   │          │  Fallback: Grok-3 on refusal │
+│  • summaries  │          └─────────────────────────────┘
+│    (L1 + L2)  │
+│  • memories   │          ┌─────────────────────────────┐
+│  (pgvector)   │          │         tts.py               │
+└───────────────┘          │  Edge TTS, az-AZ voices      │
+        ▲                  │  Prosody randomisation        │
+        │                  └─────────────────────────────┘
+┌───────────────────┐       ┌──────────────────────────┐
+│   scheduler.py    │       │    dashboard/app.py       │
+│  • Auto-messages  │       │    FastAPI web UI         │
+│  • Conv starters  │       │    Persona editor         │
+│  • L1/L2 summary  │       │    Character analysis     │
+└───────────────────┘       └──────────────────────────┘
 ```
 
 ---
@@ -130,35 +169,19 @@ cp .env.example .env
 ### 3. Set up PostgreSQL
 
 ```bash
-# Create the database
 createdb misscaddybot
-
-# Enable pgvector extension (as superuser)
 psql misscaddybot -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
-The bot initialises all tables automatically on first run.
+Tables are created automatically on first run.
 
-### 4. Seed the bot into a group
-
-```bash
-# Get your Telegram group's chat ID, then:
-python seed.py --group-id -1001234567890 --title "My Group"
-```
-
-Or seed interactively with auto-detected defaults:
-
-```bash
-python seed.py --auto
-```
-
-### 5. Run the bot
+### 4. Run the bot
 
 ```bash
 python main.py
 ```
 
-### 6. (Optional) Run the admin dashboard
+### 5. (Optional) Run the admin dashboard
 
 ```bash
 python dashboard_server.py
@@ -169,20 +192,23 @@ python dashboard_server.py
 
 ## Configuration
 
-All configuration is done via the `.env` file. Copy `.env.example` and fill in the values.
-
 | Variable | Required | Description |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | Bot token from BotFather |
-| `BOT_USERNAME` | Yes | Bot username without `@` (e.g. `misscaddybot`) |
+| `BOT_USERNAME` | Yes | Bot username without `@` |
 | `AI_PROVIDER` | Yes | `anthropic`, `openai`, or `grok` |
 | `ANTHROPIC_API_KEY` | If using Claude | Anthropic API key |
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
-| `XAI_API_KEY` | If using Grok | xAI API key |
-| `AI_MODEL` | No | Override the default model for your provider |
-| `DATABASE_URL` | Yes | PostgreSQL connection string (asyncpg format) |
-| `DASHBOARD_SECRET_KEY` | No | Secret key for dashboard session cookies |
+| `XAI_API_KEY` | Recommended | xAI key — also used for Grok-3 fallback |
+| `AI_MODEL` | No | Override the default model |
+| `DATABASE_URL` | Yes | PostgreSQL connection string (asyncpg) |
+| `DASHBOARD_SECRET_KEY` | No | Secret for dashboard session cookies |
 | `DASHBOARD_PASSWORD` | No | Admin password for the web dashboard |
+| `VOICE_CHANCE` | No | Default voice reply chance 0.0–1.0 (default: `0.08`) |
+| `REACTION_CHANCE` | No | Emoji reaction chance 0.0–1.0 (default: `0.12`) |
+| `SUMMARY_MODEL` | No | Model for summary generation (default: provider's mini model) |
+| `L2_TRIGGER_COUNT` | No | L1 summaries needed to trigger L2 (default: `4`) |
+| `MEMORY_UPDATE_INTERVAL` | No | Messages between memory extraction runs (default: `20`) |
 
 **Example `.env`:**
 
@@ -192,6 +218,7 @@ BOT_USERNAME=misscaddybot
 
 AI_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
+XAI_API_KEY=xai-...          # enables Grok-3 fallback even when AI_PROVIDER=anthropic
 
 DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/misscaddybot
 
@@ -203,37 +230,80 @@ DASHBOARD_PASSWORD=admin
 
 ## Persona System
 
-Each group has a `Persona` record that controls how the bot behaves. You can edit it via the admin dashboard or directly in the database.
+Each group has a `Persona` record. Edit via the dashboard or directly in the database.
 
 | Field | Description |
 |---|---|
-| `name` | The bot's display name in the group |
-| `bio` | Character backstory used in the system prompt |
-| `personality` | Behavioral traits and communication guidelines |
+| `name` | Display name in the group |
+| `bio` | Character backstory — prefix `[Qadın]` or `[Kişi]` for TTS gender selection |
+| `personality` | Behavioural traits and communication guidelines |
 | `language_style` | Language mix, slang level, emoji frequency |
-| `memory` | Curated facts about the group (auto-updated every 24h) |
+| `language` | Reply language: `az` (Azerbaijani), `ru` (Russian), `en` (English) |
+| `voice_chance` | % chance to reply with a voice message (0–30, default 8) |
 | `auto_message_enabled` | Whether the bot sends unprompted messages |
 | `auto_message_interval_min` | Minimum minutes between autonomous messages |
 | `auto_message_interval_max` | Maximum minutes between autonomous messages |
 | `context_window` | Number of recent messages to include as context |
+| `memory` | Curated facts about the group (auto-updated every 24h) |
+
+### Voice gender detection
+
+Prefix the `bio` field to select the TTS voice:
+
+```
+[Qadın] 24 yaşlı Bakılı qız...   →  az-AZ-BanuNeural  (female)
+[Kişi]  26 yaşlı Bakılı oğlan... →  az-AZ-BabekNeural (male)
+```
 
 ---
 
-## Admin Dashboard
+## Quick-Teach Command
 
-The FastAPI dashboard runs separately on port `8080` and provides:
+Store facts directly from the chat — no dashboard needed:
 
-- **Groups list** — all registered groups with message counts
-- **Persona editor** — edit name, bio, personality, language style
-- **Auto-message settings** — toggle and configure the scheduler per group
-- **Conversation analysis** — temporal stats, context pairs, persona typology
-- **Preset templates** — quick-apply pre-built persona configurations
-
-```bash
-python dashboard_server.py
+```
+@bot yadda saxla Kick əslində Ruslandır
+@bot remember: tomorrow is İsmayıl's birthday
+Nicat yaddaş: Firudin hər gecə saat 2-də aktivdir
 ```
 
-Navigate to `http://localhost:8080` and log in with the `DASHBOARD_PASSWORD` from your `.env`.
+The bot replies with "Yadda saxladım 👍" and the fact is stored with deduplication.
+
+---
+
+## Memory Architecture
+
+```
+Raw Messages
+    │
+    ├─▶  L1 Summary (every bot tag)
+    │       • QRUP PORTRETİ — who is who, relationships, inside jokes
+    │       • SON SÖHBƏT    — what happened in this batch (always fresh)
+    │
+    └─▶  L2 Meta-Summary (every 4 L1s)
+            • Deep group portrait across many sessions
+            • Recurring themes, relationship dynamics, group spirit
+
+Bot reply context = L2 + recent L1s + raw messages + vector facts
+```
+
+Vector facts (pgvector) are extracted every 20 messages and retrieved via cosine similarity search at reply time.
+
+---
+
+## Grok-3 Automatic Fallback
+
+When the primary AI model refuses to respond (content-policy refusal detected in Azerbaijani, English, or Russian), the bot silently retries with **Grok-3** (full model) using the exact same context and persona:
+
+```
+Primary AI → "edə bilmirəm..." → detected as refusal
+                                        ↓
+                              Grok-3 (full model)
+                                        ↓
+                              Natural reply ✅
+```
+
+Requires `XAI_API_KEY` to be set. If `AI_PROVIDER=grok` is already configured, no retry is made.
 
 ---
 
@@ -241,31 +311,29 @@ Navigate to `http://localhost:8080` and log in with the `DASHBOARD_PASSWORD` fro
 
 ```
 misscaddybot/
-├── main.py                  # Entry point: initialise DB, scheduler, and bot
+├── main.py                  # Entry point: DB init, scheduler, bot
 ├── seed.py                  # CLI: create Group + Persona records
-├── dashboard_server.py      # Entry point for the FastAPI admin dashboard
+├── dashboard_server.py      # FastAPI admin dashboard entry point
 ├── requirements.txt
 ├── .env.example
-├── pytest.ini
 │
 ├── bot/
 │   ├── models.py            # SQLAlchemy ORM models
 │   ├── database.py          # Async session factory and init_db()
 │   ├── handlers.py          # Telegram update handlers
-│   ├── ai.py                # Multi-provider AI abstraction
-│   ├── scheduler.py         # APScheduler jobs
+│   ├── ai.py                # Multi-provider AI + Grok-3 fallback
+│   ├── scheduler.py         # APScheduler jobs (auto-message, memory)
 │   ├── memory.py            # pgvector fact extraction and retrieval
-│   └── summary.py           # Rolling conversation summaries
+│   ├── summary.py           # Hierarchical L1/L2 rolling summaries
+│   ├── tts.py               # Edge TTS voice message generation
+│   ├── reactions.py         # Passive emoji reactions
+│   └── humanize.py          # Message splitting, delays, typos, circadian
 │
 ├── dashboard/
-│   ├── app.py               # FastAPI routes
+│   ├── app.py               # FastAPI routes + character analysis
 │   ├── auth.py              # Session-based authentication
 │   ├── presets.py           # Persona preset templates
 │   └── templates/           # Jinja2 HTML templates
-│       ├── base.html
-│       ├── login.html
-│       ├── groups.html
-│       └── group_edit.html
 │
 ├── systemd/
 │   └── misscaddybot.service # systemd unit for VPS deployment
@@ -284,11 +352,7 @@ misscaddybot/
 
 ## Production Deployment (Ubuntu / DigitalOcean)
 
-### 1. Provision the server
-
-A $6/month DigitalOcean droplet (1 vCPU, 1 GB RAM, Ubuntu 24.04) is sufficient.
-
-### 2. Install system dependencies
+### 1. Install system dependencies
 
 ```bash
 sudo apt update && sudo apt install -y python3.11 python3.11-venv python3-pip postgresql postgresql-contrib
@@ -296,7 +360,7 @@ sudo -u postgres psql -c "CREATE DATABASE misscaddybot;"
 sudo -u postgres psql misscaddybot -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
-### 3. Deploy the application
+### 2. Deploy
 
 ```bash
 git clone https://github.com/ismayilov1995/misscaddybot.git /opt/misscaddybot
@@ -305,23 +369,27 @@ python3.11 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit /opt/misscaddybot/.env with production values
-python seed.py --group-id <YOUR_CHAT_ID> --title "Your Group"
+# Edit .env with production values
 ```
 
-### 4. Configure systemd
+### 3. Configure systemd
 
 ```bash
 sudo cp systemd/misscaddybot.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now misscaddybot
+sudo systemctl enable --now misscaddybot misscaddy-dashboard
 ```
 
-### 5. Check status
+### 4. Database migrations (when updating an existing install)
 
 ```bash
-sudo systemctl status misscaddybot
-sudo journalctl -u misscaddybot -f
+# After git pull, run any new column additions:
+psql "postgresql://postgres:PASSWORD@localhost:5432/misscaddybot" \
+  -c "ALTER TABLE personas ADD COLUMN IF NOT EXISTS voice_chance INTEGER NOT NULL DEFAULT 8;"
+psql "postgresql://postgres:PASSWORD@localhost:5432/misscaddybot" \
+  -c "ALTER TABLE personas ADD COLUMN IF NOT EXISTS language VARCHAR(10) NOT NULL DEFAULT 'az';"
+psql "postgresql://postgres:PASSWORD@localhost:5432/misscaddybot" \
+  -c "ALTER TABLE group_summaries ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 1;"
 ```
 
 ---
@@ -329,61 +397,41 @@ sudo journalctl -u misscaddybot -f
 ## Running Tests
 
 ```bash
-# Run all tests
 pytest tests/ -v
-
-# Run a specific test file
-pytest tests/test_handlers.py -v
 ```
-
-Tests use `pytest-asyncio` (configured in `pytest.ini`) and an in-memory SQLite database where applicable.
 
 ---
 
 ## Cost Estimate
 
-Running MissCaddyBot in a moderately active group costs very little:
-
 | Item | Monthly Cost |
 |---|---|
 | DigitalOcean $6 droplet | ~$6.00 |
-| Claude Haiku API (with prompt caching) | ~$0.50–1.00 |
-| PostgreSQL (local on VPS) | $0.00 |
+| Claude Haiku + prompt caching | ~$0.50–1.00 |
+| Edge TTS (voice messages) | $0.00 (free) |
+| PostgreSQL (local) | $0.00 |
 | **Total** | **~$7–8/month** |
-
-Prompt caching keeps the system prompt warm across the ~5-minute cache TTL, reducing effective token costs by approximately 10x compared to a naive implementation.
 
 ---
 
 ## Switching AI Providers
 
-Change the `AI_PROVIDER` variable in `.env` and restart the bot:
-
 ```env
-# Use Claude (default, recommended)
+# Anthropic Claude (recommended, prompt caching supported)
 AI_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
+XAI_API_KEY=xai-...   # keep this for Grok-3 fallback
 
-# Use OpenAI ChatGPT
+# OpenAI ChatGPT
 AI_PROVIDER=openai
 OPENAI_API_KEY=sk-...
 
-# Use xAI Grok
+# xAI Grok
 AI_PROVIDER=grok
 XAI_API_KEY=xai-...
 ```
 
-Vector embeddings (for the memory system) require OpenAI or Grok. When using Anthropic, the bot falls back to recency-based context retrieval automatically.
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes and add tests
-4. Ensure all tests pass: `pytest tests/ -v`
-5. Commit with a clear message and open a pull request
+> **Note:** Vector embeddings require OpenAI or Grok. With Anthropic, the bot automatically falls back to recency-based memory retrieval.
 
 ---
 
