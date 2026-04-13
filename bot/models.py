@@ -74,6 +74,9 @@ class GroupSummary(Base):
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), nullable=False, index=True)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     last_message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # level=1: summary of raw messages (short-term)
+    # level=2: meta-summary of 4 L1 summaries (medium-term memory)
+    level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     group: Mapped["Group"] = relationship("Group", back_populates="summaries")

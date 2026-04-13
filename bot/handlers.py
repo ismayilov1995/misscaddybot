@@ -171,9 +171,9 @@ async def reply_to_mention(
     chat_id = update.effective_message.chat_id
 
     async with AsyncSessionLocal() as session:
-        from bot.summary import get_latest_summary, maybe_generate_summary
+        from bot.summary import get_summary_context, maybe_generate_summary
 
-        summary_text, _ = await get_latest_summary(session, group.id)
+        summary_context = await get_summary_context(session, group.id)
 
         context_messages = await get_context_messages(
             session, group.id, persona.context_window,
@@ -188,7 +188,7 @@ async def reply_to_mention(
         reply = await generate_reply(
             persona, context_messages,
             memory_context=memory_context,
-            summary_context=summary_text or "",
+            summary_context=summary_context,
         )
         if reply is None:
             return
@@ -379,13 +379,13 @@ async def _try_follow_up_reply(
     """Generate a follow-up reply; skip if AI returns empty/irrelevant."""
     from bot.database import AsyncSessionLocal
     from bot.ai import generate_reply
-    from bot.summary import get_latest_summary
+    from bot.summary import get_summary_context
 
     chat_id = update.effective_message.chat_id
     trigger_message_id = update.effective_message.message_id
 
     async with AsyncSessionLocal() as session:
-        summary_text, _ = await get_latest_summary(session, group.id)
+        summary_context = await get_summary_context(session, group.id)
 
         context_messages = await get_context_messages(
             session, group.id, persona.context_window,
@@ -398,7 +398,7 @@ async def _try_follow_up_reply(
         reply = await generate_reply(
             persona, context_messages,
             memory_context=memory_context,
-            summary_context=summary_text or "",
+            summary_context=summary_context,
         )
 
         # Skip if AI returned nothing useful

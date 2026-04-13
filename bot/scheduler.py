@@ -39,12 +39,9 @@ async def send_auto_message(application) -> None:
 
         try:
             async with AsyncSessionLocal() as session:
-                from bot.summary import get_latest_summary, maybe_generate_summary
+                from bot.summary import get_summary_context, maybe_generate_summary
 
-                # Always fetch the full context_window of real messages.
-                # Summary is passed as background context only, not as a
-                # replacement for real message history.
-                summary_text, _ = await get_latest_summary(session, group.id)
+                summary_context = await get_summary_context(session, group.id)
 
                 context_messages = await get_context_messages(
                     session, group.id, persona.context_window,
@@ -62,12 +59,12 @@ async def send_auto_message(application) -> None:
                 reply = await generate_reply(
                     persona, context_messages,
                     memory_context=starter_hint,
-                    summary_context=summary_text or "",
+                    summary_context=summary_context,
                     max_tokens=500,
                 )
                 logger.info("Conversation starter sent to group %d", group.telegram_id)
             else:
-                reply = await generate_reply(persona, context_messages, summary_context=summary_text or "")
+                reply = await generate_reply(persona, context_messages, summary_context=summary_context)
 
             if reply is None:
                 logger.warning("Auto-message skipped for group %d — Claude returned None", group.telegram_id)
