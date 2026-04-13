@@ -216,7 +216,7 @@ async def analyze_persona(group_id: int, _=Depends(get_current_user)):
 
         # #2 Temporal stats
         hours = [r.sent_at.hour for r in bot_rows if r.sent_at]
-        peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
+        peak_hours = [f"{h:02d}:00" for h, _ in Counter(hours).most_common(3)] if hours else []
 
         # #4 Message typology
         word_counts = [len(r.text.split()) for r in bot_rows]
@@ -355,7 +355,7 @@ async def analyze_member(group_id: int, sender_id: int, _=Depends(get_current_us
 
         # #2 Temporal stats
         hours = [r.sent_at.hour for r in rows if r.sent_at]
-        peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
+        peak_hours = [f"{h:02d}:00" for h, _ in Counter(hours).most_common(3)] if hours else []
 
         # #4 Message typology
         word_counts = [len(r.text.split()) for r in rows]
