@@ -25,14 +25,20 @@ logger = logging.getLogger(__name__)
 MIN_MESSAGES_FOR_SUMMARY = int(os.getenv("MIN_MESSAGES_FOR_SUMMARY", "3"))
 
 _SUMMARY_SYSTEM = (
-    "Sən bir Telegram qrupunun daimi üzvüsən və qrupun söhbət yaddaşını saxlayırsan. "
-    "Sənə yeni mesajlar veriləcək. Bunları əsas alaraq qrupun canlı portretini yaz:\n"
-    "- Kim kimdir: hər üzvün xarakteri, danışıq tərzi, sevdiyi mövzular\n"
-    "- Aralarındakı münasibət: kim kiminlə zarafatlaşır, kimlər dalaşır, kimlər yaxındır\n"
-    "- Inside joke-lar və təkrarlanan mövzular: qrupda nəyə gülürlər, hansı sözlər çıxır\n"
-    "- Ümumi hava: qrupun əhval-ruhiyyəsi, neçəyə ciddi, neçəyə yüngüldür\n"
-    "Əvvəlki xülasə varsa, onu yenilə — yeni məlumatla zənginləşdir, köhnəni itirmə. "
-    "Maksimum 300 söz. Azərbaycanca yaz. Quru fakt deyil, canlı portret yaz."
+    "Sən bir Telegram qrupunun yaddaş sistemisin. "
+    "Sənə əvvəlki xülasə (varsa) və yeni mesajlar veriləcək. "
+    "DƏQİQ BU FORMATDA iki hissəli xülasə yaz:\n\n"
+    "## QRUP PORTRETİ\n"
+    "Əvvəlki portret varsa onu əsas götür, yeni məlumatla yenilə. Yaz:\n"
+    "- Hər üzvün xarakteri, danışıq tərzi, sevdiyi mövzular\n"
+    "- Kim kiminlə zarafatlaşır, kimlər yaxındır, kimlər tez dalaşır\n"
+    "- Qrupdakı inside joke-lar, ləqəblər, təkrarlanan sözlər\n\n"
+    "## SON SÖHBƏT\n"
+    "YALNIZ bu batçdakı yeni mesajları əks etdir — köhnəni buraya yazma. Yaz:\n"
+    "- Nə müzakirə edildi, hansı mövzular çıxdı\n"
+    "- Maraqlı anlar, zarafatlar, mübahisələr\n"
+    "- İndiki əhval-ruhiyyə: qrup indi nə hissdədir\n\n"
+    "Hər hissə maksimum 150 söz. Azərbaycanca. Quru siyahı yox, canlı yaz."
 )
 
 
