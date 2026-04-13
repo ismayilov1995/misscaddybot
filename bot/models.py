@@ -40,6 +40,7 @@ class Persona(Base):
     auto_message_interval_max: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
     context_window: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     voice_chance: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
+    language: Mapped[str] = mapped_column(String(10), default="az", nullable=False)
     memory: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

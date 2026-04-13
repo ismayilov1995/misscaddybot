@@ -124,6 +124,20 @@
         </div>
       </div>
 
+      <!-- Language row -->
+      <div class="grid grid-cols-4 gap-4">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">Bot dili</label>
+          <select id="f-language" name="language"
+                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2.5 text-sm
+                         focus:outline-none focus:border-indigo-500 transition">
+            <option value="az" {% if not persona or (persona.language | default('az')) == 'az' %}selected{% endif %}>🇦🇿 Azərbaycan</option>
+            <option value="ru" {% if persona and (persona.language | default('az')) == 'ru' %}selected{% endif %}>🇷🇺 Rus</option>
+            <option value="en" {% if persona and (persona.language | default('az')) == 'en' %}selected{% endif %}>🇬🇧 İngilis</option>
+          </select>
+        </div>
+      </div>
+
       <div class="flex justify-end">
         <button type="submit"
                 class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium
@@ -232,6 +246,15 @@ async function runAnalysis() {
 
   try {
     const resp = await fetch('/groups/{{ group.id }}/analyze');
+    if (!resp.ok) {
+      let msg = `Server xətası (${resp.status})`;
+      try { const d = await resp.json(); if (d.error) msg = d.error; } catch(_) {}
+      container.innerHTML = `<p class="text-sm text-red-400">${msg}</p>`;
+      result.classList.remove('hidden');
+      btnText.textContent = 'Yenilə';
+      btn.disabled = false;
+      return;
+    }
     const data = await resp.json();
     if (data.error) {
       container.innerHTML = `<p class="text-sm text-red-400">${data.error}</p>`;
@@ -240,7 +263,8 @@ async function runAnalysis() {
     }
     result.classList.remove('hidden');
   } catch(e) {
-    container.innerHTML = '<p class="text-sm text-red-400">Xəta baş verdi.</p>';
+    console.error('Analysis error:', e);
+    container.innerHTML = `<p class="text-sm text-red-400">Xəta: ${e.message || e}</p>`;
     result.classList.remove('hidden');
   }
 
@@ -279,6 +303,12 @@ function applyPreset(index) {
   const genderSelect = document.getElementById('f-gender');
   for (let opt of genderSelect.options) {
     opt.selected = opt.value === p.gender;
+  }
+  const langSelect = document.getElementById('f-language');
+  if (langSelect) {
+    for (let opt of langSelect.options) {
+      opt.selected = opt.value === (p.language || 'az');
+    }
   }
 }
 </script>

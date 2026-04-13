@@ -174,66 +174,73 @@ async def group_detail(group_id: int, request: Request, _=Depends(get_current_us
 @app.get("/groups/{group_id}/analyze")
 async def analyze_persona(group_id: int, _=Depends(get_current_user)):
     """Deep bot character analysis: context pairs, temporal, typology, trend, vector facts."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Group)
-            .options(selectinload(Group.persona))
-            .where(Group.id == group_id)
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Group)
+                .options(selectinload(Group.persona))
+                .where(Group.id == group_id)
+            )
+            group = result.scalar_one_or_none()
+            if not group or not group.persona:
+                return JSONResponse({"error": "Qrup tapılmadı"}, status_code=404)
+
+            all_msgs_result = await session.execute(
+                select(Message.text, Message.is_bot, Message.sent_at)
+                .where(Message.group_id == group_id)
+                .order_by(Message.sent_at.desc())
+                .limit(80)
+            )
+            all_rows = list(reversed(all_msgs_result.all()))
+
+        bot_rows = [r for r in all_rows if r.is_bot]
+        if len(bot_rows) < 5:
+            return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
+
+        bot_rows = bot_rows[-30:]
+
+        # #1 Context pairs: user message → bot reply
+        context_pairs = []
+        for i, row in enumerate(all_rows):
+            if row.is_bot:
+                for j in range(i - 1, max(i - 4, -1), -1):
+                    if not all_rows[j].is_bot:
+                        context_pairs.append((all_rows[j].text, row.text))
+                        break
+        pairs_sample = "\n".join(
+            f"  İstifadəçi: {u}\n  Bot: {b}" for u, b in context_pairs[-10:]
         )
-        group = result.scalar_one_or_none()
-        if not group or not group.persona:
-            return JSONResponse({"error": "Qrup tapılmadı"}, status_code=404)
 
-        all_msgs_result = await session.execute(
-            select(Message.text, Message.is_bot, Message.sent_at)
-            .where(Message.group_id == group_id)
-            .order_by(Message.sent_at.desc())
-            .limit(80)
-        )
-        all_rows = list(reversed(all_msgs_result.all()))
+        # #2 Temporal stats
+        hours = [r.sent_at.hour for r in bot_rows if r.sent_at]
+        peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
 
-    bot_rows = [r for r in all_rows if r.is_bot]
-    if len(bot_rows) < 5:
-        return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
+        # #4 Message typology
+        word_counts = [len(r.text.split()) for r in bot_rows]
+        avg_words = round(sum(word_counts) / len(word_counts), 1)
+        question_pct = round(sum(1 for r in bot_rows if "?" in r.text) / len(bot_rows) * 100)
 
-    bot_rows = bot_rows[-30:]
+        # #5 Trend: first half vs second half
+        mid = len(bot_rows) // 2
+        first_half = "\n".join(f"- {r.text}" for r in bot_rows[:mid])
+        second_half = "\n".join(f"- {r.text}" for r in bot_rows[mid:])
 
-    # #1 Context pairs: user message → bot reply
-    context_pairs = []
-    for i, row in enumerate(all_rows):
-        if row.is_bot:
-            for j in range(i - 1, max(i - 4, -1), -1):
-                if not all_rows[j].is_bot:
-                    context_pairs.append((all_rows[j].text, row.text))
-                    break
-    pairs_sample = "\n".join(
-        f"  İstifadəçi: {u}\n  Bot: {b}" for u, b in context_pairs[-10:]
-    )
+        # Vector facts (non-critical — skip on error)
+        facts_block = ""
+        try:
+            async with AsyncSessionLocal() as session:
+                stored_facts = await retrieve_relevant_memories(
+                    session, group_id, " ".join(r.text for r in bot_rows[-10:]), top_k=8
+                )
+            if stored_facts:
+                facts_block = "Yığılmış qrup bilikləri:\n" + "\n".join(f"- {f}" for f in stored_facts) + "\n"
+        except Exception as e:
+            logger.warning("Vector memory retrieval failed for analysis (group %d): %s", group_id, e)
 
-    # #2 Temporal stats
-    hours = [r.sent_at.hour for r in bot_rows if r.sent_at]
-    peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
-
-    # #4 Message typology
-    word_counts = [len(r.text.split()) for r in bot_rows]
-    avg_words = round(sum(word_counts) / len(word_counts), 1)
-    question_pct = round(sum(1 for r in bot_rows if "?" in r.text) / len(bot_rows) * 100)
-
-    # #5 Trend: first half vs second half
-    mid = len(bot_rows) // 2
-    first_half = "\n".join(f"- {r.text}" for r in bot_rows[:mid])
-    second_half = "\n".join(f"- {r.text}" for r in bot_rows[mid:])
-
-    # Vector facts
-    async with AsyncSessionLocal() as session:
-        stored_facts = await retrieve_relevant_memories(
-            session, group_id, " ".join(r.text for r in bot_rows[-10:]), top_k=8
-        )
-    facts_block = ""
-    if stored_facts:
-        facts_block = "Yığılmış qrup bilikləri:\n" + "\n".join(f"- {f}" for f in stored_facts) + "\n"
-
-    prompt = f"""'{group.persona.name}' botunun dərin xarakter analizini JSON formatında ver.
+        prompt = f"""'{group.persona.name}' botunun dərin xarakter analizini JSON formatında ver.
 
 Əvvəlki mesajlar:
 {first_half}
@@ -260,8 +267,12 @@ Yalnız bu JSON strukturunu qaytar, başqa heç nə yazma:
   "trend": "əvvəlki vs son mesajlar arasında dəyişim, 1-2 cümlə"
 }}"""
 
-    raw = await _call_ai_for_analysis(prompt)
-    return _parse_analysis_response(raw)
+        raw = await _call_ai_for_analysis(prompt)
+        return _parse_analysis_response(raw)
+
+    except Exception as e:
+        logger.exception("analyze_persona failed for group %d", group_id)
+        return JSONResponse({"error": f"Server xətası: {e}"}, status_code=500)
 
 
 def _parse_analysis_response(raw: str | None) -> JSONResponse:
@@ -324,43 +335,50 @@ async def _call_ai_for_analysis(prompt: str) -> str | None:
 @app.get("/groups/{group_id}/members/{sender_id}/analyze")
 async def analyze_member(group_id: int, sender_id: int, _=Depends(get_current_user)):
     """Deep member character analysis: typology, temporal, trend, vector facts."""
-    async with AsyncSessionLocal() as session:
-        msgs_result = await session.execute(
-            select(Message.text, Message.sender_name, Message.sent_at)
-            .where(Message.group_id == group_id, Message.sender_id == sender_id, Message.is_bot == False)  # noqa: E712
-            .order_by(Message.sent_at.desc())
-            .limit(40)
-        )
-        rows = list(reversed(msgs_result.all()))
+    import logging
+    logger = logging.getLogger(__name__)
 
-    if len(rows) < 5:
-        return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
+    try:
+        async with AsyncSessionLocal() as session:
+            msgs_result = await session.execute(
+                select(Message.text, Message.sender_name, Message.sent_at)
+                .where(Message.group_id == group_id, Message.sender_id == sender_id, Message.is_bot == False)  # noqa: E712
+                .order_by(Message.sent_at.desc())
+                .limit(40)
+            )
+            rows = list(reversed(msgs_result.all()))
 
-    name = rows[-1].sender_name
+        if len(rows) < 5:
+            return JSONResponse({"error": "Analiz üçün kifayət qədər mesaj yoxdur (minimum 5)."})
 
-    # #2 Temporal stats
-    hours = [r.sent_at.hour for r in rows if r.sent_at]
-    peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
+        name = rows[-1].sender_name
 
-    # #4 Message typology
-    word_counts = [len(r.text.split()) for r in rows]
-    avg_words = round(sum(word_counts) / len(word_counts), 1)
-    question_pct = round(sum(1 for r in rows if "?" in r.text) / len(rows) * 100)
+        # #2 Temporal stats
+        hours = [r.sent_at.hour for r in rows if r.sent_at]
+        peak_hours = [f"{h:02d}:00" for h in Counter(hours).most_common(3)] if hours else []
 
-    # #5 Trend: first half vs second half
-    mid = len(rows) // 2
-    first_half = "\n".join(f"- {r.text}" for r in rows[:mid])
-    second_half = "\n".join(f"- {r.text}" for r in rows[mid:])
+        # #4 Message typology
+        word_counts = [len(r.text.split()) for r in rows]
+        avg_words = round(sum(word_counts) / len(word_counts), 1)
+        question_pct = round(sum(1 for r in rows if "?" in r.text) / len(rows) * 100)
 
-    # Vector facts
-    async with AsyncSessionLocal() as session:
-        query = f"{name} " + " ".join(r.text for r in rows[-10:])
-        stored_facts = await retrieve_relevant_memories(session, group_id, query, top_k=8)
-    facts_block = ""
-    if stored_facts:
-        facts_block = "Yığılmış qrup bilikləri:\n" + "\n".join(f"- {f}" for f in stored_facts) + "\n"
+        # #5 Trend: first half vs second half
+        mid = len(rows) // 2
+        first_half = "\n".join(f"- {r.text}" for r in rows[:mid])
+        second_half = "\n".join(f"- {r.text}" for r in rows[mid:])
 
-    prompt = f"""'{name}' adlı şəxsin dərin xarakter analizini JSON formatında ver.
+        # Vector facts (non-critical — skip on error)
+        facts_block = ""
+        try:
+            async with AsyncSessionLocal() as session:
+                query = f"{name} " + " ".join(r.text for r in rows[-10:])
+                stored_facts = await retrieve_relevant_memories(session, group_id, query, top_k=8)
+            if stored_facts:
+                facts_block = "Yığılmış qrup bilikləri:\n" + "\n".join(f"- {f}" for f in stored_facts) + "\n"
+        except Exception as e:
+            logger.warning("Vector memory retrieval failed for member analysis (group %d): %s", group_id, e)
+
+        prompt = f"""'{name}' adlı şəxsin dərin xarakter analizini JSON formatında ver.
 
 Əvvəlki mesajlar:
 {first_half}
@@ -384,12 +402,16 @@ Yalnız bu JSON strukturunu qaytar, başqa heç nə yazma:
   "trend": "əvvəlki vs son mesajlar arasında dəyişim, 1-2 cümlə"
 }}"""
 
-    raw = await _call_ai_for_analysis(prompt)
-    result = _parse_analysis_response(raw)
-    # Inject name for frontend
-    result_data = json.loads(result.body)
-    result_data["name"] = name
-    return JSONResponse(result_data)
+        raw = await _call_ai_for_analysis(prompt)
+        result = _parse_analysis_response(raw)
+        # Inject name for frontend
+        result_data = json.loads(result.body)
+        result_data["name"] = name
+        return JSONResponse(result_data)
+
+    except Exception as e:
+        logger.exception("analyze_member failed for group %d, sender %d", group_id, sender_id)
+        return JSONResponse({"error": f"Server xətası: {e}"}, status_code=500)
 
 
 @app.post("/groups/{group_id}/persona")
@@ -404,6 +426,7 @@ async def update_persona(
     auto_message_interval_max: int = Form(...),
     context_window: int = Form(...),
     voice_chance: int = Form(8),
+    language: str = Form("az"),
     _=Depends(get_current_user),
 ):
     async with AsyncSessionLocal() as session:
@@ -420,6 +443,7 @@ async def update_persona(
             persona.auto_message_interval_max = auto_message_interval_max
             persona.context_window = context_window
             persona.voice_chance = voice_chance
+            persona.language = language if language in ("az", "ru", "en") else "az"
             # Store gender in bio prefix if provided
             if gender and not persona.bio.startswith(f"[{gender}]"):
                 persona.bio = f"[{gender}] {bio}"

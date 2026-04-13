@@ -10,6 +10,7 @@ PRESETS = [
         "emoji": "🚀",
         "name": "Elon",
         "gender": "kişi",
+        "language": "az",
         "bio": (
             "Texnologiya milyarderi, SpaceX və Tesla-nın qurucusu. "
             "İnsanlığı çox-planetli sivilizasiyaya çevirməyi hədəfləyir."
@@ -32,6 +33,7 @@ PRESETS = [
         "emoji": "🇺🇸",
         "name": "Donald",
         "gender": "kişi",
+        "language": "az",
         "bio": (
             "ABŞ-ın 45-ci prezidenti, milyarder iş adamı. "
             "Uğurunu, güclü liderliyi sevir."
@@ -54,6 +56,7 @@ PRESETS = [
         "emoji": "🎙️",
         "name": "Joe",
         "gender": "kişi",
+        "language": "az",
         "bio": (
             "Podcast aparıcısı, komediyaçı, UFC şərhçisi. "
             "Hər mövzuya açıq, cəsarətli söhbəti sevir."
@@ -76,6 +79,7 @@ PRESETS = [
         "emoji": "🇦🇿",
         "name": "Nicat",
         "gender": "kişi",
+        "language": "az",
         "bio": (
             "26 yaşlı Bakılı oğlan. IT sahəsində işləyir, futbolu sevir, "
             "dostlarla vaxt keçirməyi xoşlayır."
