@@ -153,20 +153,20 @@ async def reply_to_mention(
     extra_memory: str = "",
 ) -> None:
     """
-    Full reactive reply loop — called as a background task when a mention is detected
-    or during a follow-up conversation.
+    Full reactive reply loop with human-like behaviors.
 
-    Steps:
-      1. Fetch recent context messages from DB
-      2. Call Claude API via generate_reply
-      3. If None (API error) → return silently, no message sent
-      4. Send typing indicator
-      5. Sleep for realistic human-like delay (base 1–4s + length-scaled)
-      6. Send reply to chat (optionally as a reply to a specific message)
-      7. Save bot's outgoing message to DB
+    Human features:
+      • Circadian rhythm — shorter replies at night, mood hints
+      • Message splitting — sometimes sends 2-3 short messages instead of one
+      • Typos — occasionally makes a typo and corrects it
+      • Voice — random chance to reply with voice message
     """
     from bot.database import AsyncSessionLocal
     from bot.ai import generate_reply
+    from bot.humanize import (
+        adjust_max_tokens, get_mood_hint,
+        maybe_split_reply, maybe_add_typo,
+    )
 
     chat_id = update.effective_message.chat_id
 
@@ -185,16 +185,24 @@ async def reply_to_mention(
         if extra_memory:
             memory_context = f"{memory_context}\n\n{extra_memory}" if memory_context else extra_memory
 
+        # Circadian mood hint
+        mood_hint = get_mood_hint()
+        if mood_hint:
+            memory_context = f"{memory_context}\n\n{mood_hint}" if memory_context else mood_hint
+
+        # Circadian-aware token limit
+        max_tokens = adjust_max_tokens()
+
         reply = await generate_reply(
             persona, context_messages,
             memory_context=memory_context,
             summary_context=summary_context,
+            max_tokens=max_tokens,
         )
         if reply is None:
             return
 
         # Decide: voice or text?
-        # "səslə" / "sesle" / "voice" in message forces voice reply
         from bot.tts import should_send_voice, text_to_voice
         msg_text = (update.effective_message.text or "").lower()
         force_voice = any(kw in msg_text for kw in ("səslə", "sesle", "voice"))
@@ -209,16 +217,35 @@ async def reply_to_mention(
             voice_buf = None
 
         if not send_as_voice or voice_buf is None:
-            # Text reply (default or voice generation failed)
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            delay = random.uniform(1, 4) + min(len(reply) * 0.04, 8)
-            await asyncio.sleep(delay)
+            # ── Text reply with human-like multi-message ──
+            parts = maybe_split_reply(reply)
 
-            sent_msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=reply,
-                reply_to_message_id=reply_to_message_id,
-            )
+            sent_msg = None
+            for i, part in enumerate(parts):
+                # Typo chance on first or second part
+                correction = None
+                if i < len(parts) - 1:
+                    part, correction = maybe_add_typo(part)
+
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                if i == 0:
+                    delay = random.uniform(1, 4) + min(len(part) * 0.04, 6)
+                else:
+                    delay = random.uniform(1.5, 4.0) + min(len(part) * 0.03, 4)
+                await asyncio.sleep(delay)
+
+                # Only first part replies to the original message
+                reply_id = reply_to_message_id if i == 0 else None
+                sent_msg = await context.bot.send_message(
+                    chat_id=chat_id, text=part, reply_to_message_id=reply_id,
+                )
+
+                # Send typo correction as a quick follow-up
+                if correction:
+                    await asyncio.sleep(random.uniform(0.8, 2.0))
+                    sent_msg = await context.bot.send_message(
+                        chat_id=chat_id, text=correction,
+                    )
         else:
             # Voice reply
             delay = random.uniform(1, 3)
@@ -482,6 +509,12 @@ async def handle_message(
             sent_at,
         )
 
+    # ── Passive emoji reaction (on ANY message, not just mentions) ──
+    from bot.reactions import maybe_react
+    asyncio.create_task(
+        maybe_react(context.bot, chat_id, message.message_id, message.text)
+    )
+
     if is_mentioned(message, context.bot.username, persona.name, context.bot.id):
         # Check for quick-teach command first
         teach_fact = _extract_teach_fact(message.text, persona.name, context.bot.username)
@@ -491,13 +524,50 @@ async def handle_message(
                 _handle_teach(update, context, group, teach_fact)
             )
         else:
-            logger.info("Mention detected in group %d — spawning reply task", chat_id)
-            asyncio.create_task(reply_to_mention(update, context, group, persona))
+            # ── Delayed reply chance: "miss" the mention, reply later ──
+            from bot.humanize import should_delay_reply, get_late_prefix
+            should_delay, delay_secs = should_delay_reply()
+
+            if should_delay:
+                logger.info(
+                    "Delayed reply for group %d — will reply in %d seconds",
+                    chat_id, delay_secs,
+                )
+                asyncio.create_task(
+                    _delayed_mention_reply(
+                        update, context, group, persona, delay_secs,
+                    )
+                )
+            else:
+                logger.info("Mention detected in group %d — spawning reply task", chat_id)
+                asyncio.create_task(reply_to_mention(update, context, group, persona))
     else:
         # Follow-up: if bot was active recently, sometimes continue the conversation
         asyncio.create_task(
             maybe_follow_up(update, context, group, persona)
         )
+
+
+async def _delayed_mention_reply(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    group: Group,
+    persona: Persona,
+    delay_seconds: int,
+) -> None:
+    """Sleep for delay_seconds, then reply as if just saw the message."""
+    from bot.humanize import get_late_prefix
+
+    await asyncio.sleep(delay_seconds)
+
+    late_prefix = get_late_prefix()
+    logger.info("Delayed reply firing for group %d after %ds", group.telegram_id, delay_seconds)
+
+    await reply_to_mention(
+        update, context, group, persona,
+        reply_to_message_id=update.effective_message.message_id,
+        extra_memory=f"{late_prefix}. İndi cavab ver, amma əvvəl '{late_prefix}' de.",
+    )
 
 
 async def handle_bot_added(
