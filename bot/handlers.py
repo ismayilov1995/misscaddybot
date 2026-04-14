@@ -185,13 +185,55 @@ async def reply_to_mention(
         if extra_memory:
             memory_context = f"{memory_context}\n\n{extra_memory}" if memory_context else extra_memory
 
-        # Circadian mood hint
-        mood_hint = get_mood_hint()
-        if mood_hint:
-            memory_context = f"{memory_context}\n\n{mood_hint}" if memory_context else mood_hint
+        # Circadian mood hint (time-of-day based)
+        circadian_hint = get_mood_hint()
+        if circadian_hint:
+            memory_context = f"{memory_context}\n\n{circadian_hint}" if memory_context else circadian_hint
+
+        # Persistent persona mood hint
+        from bot.mood import get_mood_hint as get_persona_mood_hint
+        persona_mood = getattr(persona, "mood", "normal") or "normal"
+        persona_mood_hint = get_persona_mood_hint(persona_mood)
+        if persona_mood_hint:
+            memory_context = f"{memory_context}\n\n{persona_mood_hint}" if memory_context else persona_mood_hint
+
+        # Web search for real-time questions
+        msg_text = (update.effective_message.text or "")
+        from bot.search import needs_search, search_web
+        if needs_search(msg_text):
+            search_result = await search_web(msg_text)
+            if search_result:
+                memory_context = f"{memory_context}\n\n{search_result}" if memory_context else search_result
 
         # Circadian-aware token limit
         max_tokens = adjust_max_tokens()
+
+        # Image generation check — runs before text reply
+        from bot.image_gen import should_generate_image, generate_image
+        if should_generate_image(msg_text, mentioned=True):
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+            img_bytes = await generate_image(msg_text, persona.name, persona.personality)
+            if img_bytes:
+                await asyncio.sleep(random.uniform(1, 3))
+                sent_img = await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=img_bytes,
+                    reply_to_message_id=reply_to_message_id,
+                )
+                await save_message(
+                    session,
+                    group_id=group.id,
+                    telegram_message_id=sent_img.message_id,
+                    sender_id=context.bot.id,
+                    sender_name=persona.name,
+                    sender_username=context.bot.username,
+                    text="[Şəkil göndərildi]",
+                    is_bot=True,
+                    replied_to_id=reply_to_message_id,
+                    sent_at=sent_img.date,
+                )
+                logger.info("Image generated and sent in group %d", group.telegram_id)
+                return  # image sent — skip text reply
 
         reply = await generate_reply(
             persona, context_messages,
@@ -974,3 +1016,103 @@ async def handle_voice(
         logger.info("Voice reaction sent in group %d", group.telegram_id)
     except Exception as e:
         logger.warning("Voice reply failed: %s", e)
+
+
+async def handle_audio(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Fires when a music/audio file is sent to the group.
+    Saves track info to DB. 40% chance bot comments on the song.
+    Registered for: filters.AUDIO & filters.ChatType.GROUPS
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.ai import generate_reply
+
+    message = update.effective_message
+    if message is None or not message.audio:
+        return
+
+    chat_id = message.chat_id
+
+    async with AsyncSessionLocal() as session:
+        result = await get_group_with_persona(session, chat_id)
+        if result is None:
+            return
+        group, persona = result
+
+    audio = message.audio
+    title = (audio.title or "").strip() or "Naməlum"
+    performer = (audio.performer or "").strip()
+    track_info = f"{performer} — {title}" if performer else title
+    saved_text = f"[Musiqi: {track_info}]"
+
+    sender_id = message.from_user.id if message.from_user else 0
+    sender_name = "Biri"
+    sender_username = None
+    if message.from_user:
+        sender_name = " ".join(
+            filter(None, [message.from_user.first_name, message.from_user.last_name])
+        ) or "Biri"
+        sender_username = message.from_user.username
+
+    async with AsyncSessionLocal() as session:
+        await save_message(
+            session,
+            group_id=group.id,
+            telegram_message_id=message.message_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            sender_username=sender_username,
+            text=saved_text,
+            is_bot=False,
+            replied_to_id=message.reply_to_message.message_id if message.reply_to_message else None,
+            sent_at=message.date,
+        )
+
+    logger.info("Audio saved for group %d: %s", group.telegram_id, track_info[:60])
+
+    # 40% chance: comment on the track
+    if random.random() > 0.40:
+        return
+
+    hint = (
+        f"Qrupda biri '{track_info}' musiqisini paylaşdı. "
+        f"Buna münasibətini 1 cümlə ilə bil dir — qısa, təbii, öz tərzdə. "
+        f"Musiqini tanıyırsansa — fikir ver, tanımırsansa — adına əsasən komment et."
+    )
+
+    reply = await generate_reply(
+        persona,
+        context_messages=[{"role": "user", "content": hint}],
+        max_tokens=80,
+    )
+    if not reply:
+        return
+
+    await asyncio.sleep(random.uniform(2, 5))
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    await asyncio.sleep(random.uniform(1, 2))
+
+    try:
+        sent_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=reply,
+            reply_to_message_id=message.message_id,
+        )
+        async with AsyncSessionLocal() as session:
+            await save_message(
+                session,
+                group_id=group.id,
+                telegram_message_id=sent_msg.message_id,
+                sender_id=context.bot.id,
+                sender_name=persona.name,
+                sender_username=context.bot.username,
+                text=reply,
+                is_bot=True,
+                replied_to_id=message.message_id,
+                sent_at=sent_msg.date,
+            )
+        logger.info("Audio comment sent in group %d", group.telegram_id)
+    except Exception as e:
+        logger.warning("Audio comment failed: %s", e)

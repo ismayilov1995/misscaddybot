@@ -18,7 +18,7 @@ for var in REQUIRED_VARS:
         sys.exit(f"ERROR: {var} is not set in .env")
 
 # Project imports come AFTER load_dotenv() and env validation.
-from telegram.ext import Application, ChatMemberHandler, MessageHandler, filters  # noqa: E402
+from telegram.ext import Application, ChatMemberHandler, InlineQueryHandler, MessageHandler, filters  # noqa: E402
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -51,15 +51,18 @@ def main() -> None:
         .build()
     )
 
-    from bot.handlers import handle_message, handle_bot_added, handle_photo, handle_new_member, handle_voice
+    from bot.handlers import handle_message, handle_bot_added, handle_photo, handle_new_member, handle_voice, handle_audio
+    from bot.inline import handle_inline_query
     app.add_handler(ChatMemberHandler(handle_bot_added, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo))
     app.add_handler(MessageHandler(filters.VOICE & filters.ChatType.GROUPS, handle_voice))
+    app.add_handler(MessageHandler(filters.AUDIO & filters.ChatType.GROUPS, handle_audio))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
+    app.add_handler(InlineQueryHandler(handle_inline_query))
 
     logger.info("Starting bot...")
-    app.run_polling(allowed_updates=["message", "my_chat_member", "chat_member", "voice"])
+    app.run_polling(allowed_updates=["message", "my_chat_member", "chat_member", "inline_query"])
 
 
 if __name__ == "__main__":

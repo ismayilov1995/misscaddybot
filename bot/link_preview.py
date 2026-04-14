@@ -57,10 +57,11 @@ async def fetch_link_metadata(url: str) -> dict[str, str]:
     """
     Fetch a URL and extract key metadata.
 
-    Returns dict with keys: title, description, site_name, url.
+    Returns dict with keys: title, description, site_name, url, transcript.
     All values are strings (empty string if not found).
+    For YouTube URLs, also fetches the video transcript when available.
     """
-    result = {"title": "", "description": "", "site_name": "", "url": url}
+    result = {"title": "", "description": "", "site_name": "", "url": url, "transcript": ""}
 
     headers = {
         "User-Agent": (
@@ -109,6 +110,13 @@ async def fetch_link_metadata(url: str) -> dict[str, str]:
             elif key == "og:site_name":
                 result["site_name"] = val[:100]
 
+    # For YouTube links, also fetch the transcript
+    from bot.youtube_utils import extract_video_id, get_youtube_transcript
+    if extract_video_id(url):
+        transcript = await get_youtube_transcript(url)
+        if transcript:
+            result["transcript"] = transcript
+
     return result
 
 
@@ -124,6 +132,11 @@ def format_link_context(metadata: dict[str, str]) -> str:
         if len(desc) > 200:
             desc = desc[:200] + "..."
         parts.append(f"Açıqlama: {desc}")
+    if metadata.get("transcript"):
+        snippet = metadata["transcript"][:400]
+        if len(metadata["transcript"]) > 400:
+            snippet += "..."
+        parts.append(f"Video mətni: {snippet}")
     if not parts:
         parts.append(f"Link: {metadata['url']}")
     return "\n".join(parts)

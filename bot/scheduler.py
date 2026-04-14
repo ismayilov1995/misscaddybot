@@ -38,6 +38,12 @@ async def send_auto_message(application) -> None:
             continue
 
         try:
+            # ── 10% chance: send a poll instead of a text message ──
+            if random.random() < 0.10:
+                poll_sent = await _try_send_poll(application, group, persona)
+                if poll_sent:
+                    continue  # skip text auto-message for this iteration
+
             async with AsyncSessionLocal() as session:
                 from bot.summary import get_summary_context, maybe_generate_summary
 
@@ -93,6 +99,99 @@ async def send_auto_message(application) -> None:
 
         except Exception as e:
             logger.warning("Auto-message failed for group %d: %s", group.telegram_id, e)
+
+
+async def _try_send_poll(application, group, persona) -> bool:
+    """
+    Generate and send a fun poll to the group.
+    Returns True if a poll was sent, False on failure.
+    """
+    import json
+    import anthropic
+    import os
+
+    poll_prompt = (
+        f"Sən '{persona.name}' adlı birisisən. Bu Telegram qrupu üçün maraqlı bir sorğu-anket hazırla. "
+        "Yalnız JSON formatında cavab ver, başqa heç nə yazma:\n"
+        '{"question": "...", "options": ["seçim1", "seçim2", "seçim3", "seçim4"]}\n'
+        "Mövzu: gündəlik həyat, rəy, tercih, əyləncəli sual. Azərbaycan dilində."
+    )
+
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            max_tokens=200,
+            messages=[{"role": "user", "content": poll_prompt}],
+        )
+        raw = response.content[0].text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        poll_data = json.loads(raw)
+        question = poll_data.get("question", "").strip()
+        options = [str(o).strip() for o in poll_data.get("options", []) if str(o).strip()]
+
+        if not question or len(options) < 2:
+            return False
+
+        await application.bot.send_poll(
+            chat_id=group.telegram_id,
+            question=question[:300],
+            options=[o[:100] for o in options[:10]],
+            is_anonymous=False,
+        )
+        logger.info("Auto poll sent to group %d: %s", group.telegram_id, question[:60])
+        return True
+
+    except Exception as e:
+        logger.debug("Poll generation failed for group %d: %s", group.telegram_id, e)
+        return False
+
+
+async def shift_group_moods(application) -> None:
+    """
+    APScheduler job — runs every 3 hours.
+    Each persona has a 20% chance to transition to an adjacent mood.
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.mood import shift_mood
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Group)
+            .options(selectinload(Group.persona))
+            .where(Group.is_active == True)  # noqa: E712
+        )
+        groups = result.scalars().all()
+
+    for group in groups:
+        persona = group.persona
+        if persona is None:
+            continue
+
+        current_mood = getattr(persona, "mood", "normal") or "normal"
+        new_mood = shift_mood(current_mood)
+
+        if new_mood != current_mood:
+            try:
+                async with AsyncSessionLocal() as session:
+                    from sqlalchemy import select as sa_select
+                    result = await session.execute(
+                        sa_select(Persona).where(Persona.group_id == group.id)
+                    )
+                    p = result.scalar_one_or_none()
+                    if p:
+                        p.mood = new_mood
+                        await session.commit()
+                logger.info(
+                    "Mood shift for group %d: %s → %s",
+                    group.telegram_id, current_mood, new_mood,
+                )
+            except Exception as e:
+                logger.warning("Mood shift failed for group %d: %s", group.telegram_id, e)
 
 
 async def update_group_memory(application) -> None:
@@ -364,6 +463,18 @@ def build_scheduler(application) -> AsyncIOScheduler:
         args=[application],
         id="silent_members",
         name="Silent member check",
+        replace_existing=True,
+    )
+
+    # Mood shifts — every 3 hours, each persona has 20% chance to change mood
+    scheduler.add_job(
+        shift_group_moods,
+        trigger="interval",
+        hours=3,
+        jitter=600,
+        args=[application],
+        id="mood_shift",
+        name="Persona mood shift",
         replace_existing=True,
     )
 
