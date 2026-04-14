@@ -80,10 +80,12 @@ _REFUSAL_PATTERNS = [
     "i'm not going to", "i will not", "i must decline",
     "inappropriate", "goes against", "violates", "harmful content",
     "i'm sorry, but i", "i apologize, but i",
-    # Azerbaijani
-    "edə bilmirəm", "kömək edə bilmirəm", "bunu edə bilmirəm",
-    "etmək istəmirəm", "uyğun deyil", "etik deyil",
-    "üzr istəyirəm, amma", "bu sorğuya cavab verə bilmirəm",
+    # Azerbaijani — keep only phrases that are unambiguously AI self-refusals,
+    # NOT phrases that also appear in normal persona/moderator responses.
+    # Removed: "uyğun deyil" (false positive — appears in "bu uyğun deyil" moderator lines)
+    # Removed: "etmək istəmirəm" (false positive — appears in normal persona speech)
+    "kömək edə bilmirəm", "bunu edə bilmirəm",
+    "etik deyil", "üzr istəyirəm, amma", "bu sorğuya cavab verə bilmirəm",
     # Russian
     "я не могу", "не буду", "не способен",
 ]

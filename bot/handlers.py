@@ -16,6 +16,12 @@ from bot.models import Group, Message, Persona, MemberProfile
 
 logger = logging.getLogger(__name__)
 
+# Cooldown to prevent cascading follow-up chains.
+# After a follow-up fires, skip follow-ups for this group for N seconds
+# so the bot doesn't reply to its own follow-up endlessly.
+_follow_up_cooldown: dict[int, float] = {}  # group_id -> last follow-up epoch time
+_FOLLOW_UP_COOLDOWN_SECS = 300  # 5 minutes
+
 
 async def get_group_with_persona(
     session: AsyncSession, telegram_id: int
@@ -420,10 +426,18 @@ async def maybe_follow_up(
     if not bot_was_recent:
         return
 
+    # Guard: skip if a follow-up was sent recently (prevents cascade chains
+    # where each bot follow-up triggers another follow-up indefinitely).
+    import time as _time
+    now = _time.monotonic()
+    if now - _follow_up_cooldown.get(group.id, 0) < _FOLLOW_UP_COOLDOWN_SECS:
+        return
+
     # 25% chance to follow up
     if random.random() > 0.25:
         return
 
+    _follow_up_cooldown[group.id] = now
     logger.info("Follow-up triggered in group %d", group.telegram_id)
 
     follow_up_hint = (
