@@ -523,6 +523,20 @@ async def handle_message(
         maybe_react(context.bot, chat_id, message.message_id, message.text)
     )
 
+    # ── Link preview: fetch metadata and inject into context if links found ──
+    from bot.link_preview import extract_links, should_react_to_link, fetch_link_metadata, format_link_context
+    _links = extract_links(message.text)
+    _link_extra_memory = ""
+    if _links:
+        _mentioned_now = is_mentioned(message, context.bot.username, persona.name, context.bot.id)
+        if should_react_to_link(mentioned=_mentioned_now):
+            try:
+                _meta = await fetch_link_metadata(_links[0])
+                _link_extra_memory = format_link_context(_meta)
+                logger.debug("Link preview fetched for group %d: %s", chat_id, _links[0][:80])
+            except Exception as _e:
+                logger.debug("Link preview failed: %s", _e)
+
     if is_mentioned(message, context.bot.username, persona.name, context.bot.id):
         # Check for quick-teach command first
         teach_fact = _extract_teach_fact(message.text, persona.name, context.bot.username)
@@ -544,11 +558,14 @@ async def handle_message(
                 asyncio.create_task(
                     _delayed_mention_reply(
                         update, context, group, persona, delay_secs,
+                        extra_memory=_link_extra_memory,
                     )
                 )
             else:
                 logger.info("Mention detected in group %d — spawning reply task", chat_id)
-                asyncio.create_task(reply_to_mention(update, context, group, persona))
+                asyncio.create_task(
+                    reply_to_mention(update, context, group, persona, extra_memory=_link_extra_memory)
+                )
     else:
         # Follow-up: if bot was active recently, sometimes continue the conversation
         asyncio.create_task(
@@ -562,6 +579,7 @@ async def _delayed_mention_reply(
     group: Group,
     persona: Persona,
     delay_seconds: int,
+    extra_memory: str = "",
 ) -> None:
     """Sleep for delay_seconds, then reply as if just saw the message."""
     from bot.humanize import get_late_prefix
@@ -571,10 +589,14 @@ async def _delayed_mention_reply(
     late_prefix = get_late_prefix()
     logger.info("Delayed reply firing for group %d after %ds", group.telegram_id, delay_seconds)
 
+    combined_memory = f"{late_prefix}. İndi cavab ver, amma əvvəl '{late_prefix}' de."
+    if extra_memory:
+        combined_memory = f"{combined_memory}\n\n{extra_memory}"
+
     await reply_to_mention(
         update, context, group, persona,
         reply_to_message_id=update.effective_message.message_id,
-        extra_memory=f"{late_prefix}. İndi cavab ver, amma əvvəl '{late_prefix}' de.",
+        extra_memory=combined_memory,
     )
 
 
@@ -824,3 +846,131 @@ async def handle_photo(
         logger.info("Photo reaction sent in group %d", group.telegram_id)
     except Exception as e:
         logger.warning("Photo reply send failed: %s", e)
+
+
+async def handle_voice(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Fires when a voice message is sent to the group.
+    Transcribes with Whisper, saves as a regular message, optionally replies.
+    Registered for: filters.VOICE & filters.ChatType.GROUPS
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.stt import transcribe_voice, should_react_to_voice
+
+    message = update.effective_message
+    if message is None or not message.voice:
+        return
+
+    chat_id = message.chat_id
+
+    async with AsyncSessionLocal() as session:
+        result = await get_group_with_persona(session, chat_id)
+        if result is None:
+            return
+        group, persona = result
+
+    sender_id = message.from_user.id if message.from_user else 0
+    sender_name = "Biri"
+    sender_username = None
+    if message.from_user:
+        sender_name = " ".join(
+            filter(None, [message.from_user.first_name, message.from_user.last_name])
+        ) or "Biri"
+        sender_username = message.from_user.username
+
+    # Download and transcribe
+    tg_file = await context.bot.get_file(message.voice.file_id)
+    voice_url = tg_file.file_path
+
+    transcription = await transcribe_voice(voice_url)
+    if not transcription:
+        logger.debug("Voice transcription empty/failed in group %d", group.telegram_id)
+        return
+
+    logger.info("Voice transcribed in group %d: %s", group.telegram_id, transcription[:80])
+
+    # Save to DB as a regular user message so it's part of conversation context
+    saved_text = f"[Səs mesajı: {transcription}]"
+    async with AsyncSessionLocal() as session:
+        await save_message(
+            session,
+            group_id=group.id,
+            telegram_message_id=message.message_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            sender_username=sender_username,
+            text=saved_text,
+            is_bot=False,
+            replied_to_id=message.reply_to_message.message_id if message.reply_to_message else None,
+            sent_at=message.date,
+        )
+
+    # Track member activity
+    from bot.member_profiles import update_member_activity
+    asyncio.create_task(
+        update_member_activity(
+            group.id, sender_id, sender_name, sender_username, saved_text, message.date
+        )
+    )
+
+    # Check if bot is mentioned (by name in... well, we only have the transcription)
+    mentioned = persona.name.lower() in transcription.lower()
+
+    if not should_react_to_voice(mentioned=mentioned):
+        return
+
+    # Generate a reply that knows this was a voice message
+    from bot.ai import generate_reply
+    from bot.humanize import adjust_max_tokens, get_mood_hint
+    from bot.summary import get_summary_context
+
+    async with AsyncSessionLocal() as session:
+        from bot.memory import get_memory_context
+        summary_context = await get_summary_context(session, group.id)
+        context_messages = await get_context_messages(session, group.id, persona.context_window)
+        memory_context = await get_memory_context(session, group.id, context_messages)
+
+    voice_hint = (
+        f"{sender_name} bir səs mesajı göndərdi: \"{transcription}\"\n"
+        f"Bunu nəzərə alaraq cavab ver — sanki real vaxtda eşitdin."
+    )
+    mood_hint = get_mood_hint()
+    hints = "\n\n".join(filter(None, [memory_context, voice_hint, mood_hint]))
+
+    reply = await generate_reply(
+        persona, context_messages,
+        memory_context=hints,
+        summary_context=summary_context,
+        max_tokens=adjust_max_tokens(),
+    )
+    if not reply:
+        return
+
+    await asyncio.sleep(random.uniform(2, 5))
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    await asyncio.sleep(random.uniform(1, 3))
+
+    try:
+        sent_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=reply,
+            reply_to_message_id=message.message_id,
+        )
+        async with AsyncSessionLocal() as session:
+            await save_message(
+                session,
+                group_id=group.id,
+                telegram_message_id=sent_msg.message_id,
+                sender_id=context.bot.id,
+                sender_name=persona.name,
+                sender_username=context.bot.username,
+                text=reply,
+                is_bot=True,
+                replied_to_id=message.message_id,
+                sent_at=sent_msg.date,
+            )
+        logger.info("Voice reaction sent in group %d", group.telegram_id)
+    except Exception as e:
+        logger.warning("Voice reply failed: %s", e)

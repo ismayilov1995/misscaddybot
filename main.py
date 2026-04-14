@@ -51,14 +51,15 @@ def main() -> None:
         .build()
     )
 
-    from bot.handlers import handle_message, handle_bot_added, handle_photo, handle_new_member
+    from bot.handlers import handle_message, handle_bot_added, handle_photo, handle_new_member, handle_voice
     app.add_handler(ChatMemberHandler(handle_bot_added, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo))
+    app.add_handler(MessageHandler(filters.VOICE & filters.ChatType.GROUPS, handle_voice))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
 
     logger.info("Starting bot...")
-    app.run_polling(allowed_updates=["message", "my_chat_member", "chat_member"])
+    app.run_polling(allowed_updates=["message", "my_chat_member", "chat_member", "voice"])
 
 
 if __name__ == "__main__":
