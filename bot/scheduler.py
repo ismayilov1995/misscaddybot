@@ -172,28 +172,148 @@ async def update_group_memory(application) -> None:
             logger.warning("Memory update failed for group %d: %s", group.telegram_id, e)
 
 
+async def send_weekly_digest(application) -> None:
+    """
+    APScheduler job — runs every Sunday at 10:00 AM Baku time.
+    Sends a fun weekly recap to every active group.
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.weekly_digest import generate_weekly_digest
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Group)
+            .options(selectinload(Group.persona))
+            .where(Group.is_active == True)  # noqa: E712
+        )
+        groups = result.scalars().all()
+
+    for group in groups:
+        persona = group.persona
+        if persona is None or not persona.auto_message_enabled:
+            continue
+        try:
+            digest = await generate_weekly_digest(group.id, group.telegram_id, persona)
+            if digest:
+                await application.bot.send_message(
+                    chat_id=group.telegram_id, text=digest
+                )
+                logger.info("Weekly digest sent to group %d", group.telegram_id)
+        except Exception as e:
+            logger.warning("Weekly digest failed for group %d: %s", group.telegram_id, e)
+
+
+async def check_birthdays(application) -> None:
+    """
+    APScheduler job — runs daily at 09:00 AM Baku time.
+    Sends birthday greetings for members whose birthday is today.
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.member_profiles import get_todays_birthdays
+    from bot.ai import generate_reply
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Group)
+            .options(selectinload(Group.persona))
+            .where(Group.is_active == True)  # noqa: E712
+        )
+        groups = result.scalars().all()
+
+    for group in groups:
+        persona = group.persona
+        if persona is None:
+            continue
+        try:
+            async with AsyncSessionLocal() as session:
+                birthday_members = await get_todays_birthdays(session, group.id)
+
+            for member in birthday_members:
+                hint = (
+                    f"Bu gün {member.sender_name}-in ad günüdür! "
+                    f"Onu təbrik et — qısa, səmimi, qrupun öz tərzi ilə. "
+                    f"Rəsmi yox, real dost kimi."
+                )
+                reply = await generate_reply(
+                    persona,
+                    context_messages=[{"role": "user", "content": hint}],
+                    max_tokens=120,
+                )
+                if reply:
+                    await application.bot.send_message(
+                        chat_id=group.telegram_id, text=reply
+                    )
+                    logger.info(
+                        "Birthday greeting sent for %s in group %d",
+                        member.sender_name, group.telegram_id,
+                    )
+        except Exception as e:
+            logger.warning("Birthday check failed for group %d: %s", group.telegram_id, e)
+
+
+async def check_silent_members(application) -> None:
+    """
+    APScheduler job — runs every 12 hours.
+    If a regular member has been silent for 48+ hours, bot may mention them.
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.member_profiles import get_silent_members
+    from bot.ai import generate_reply
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Group)
+            .options(selectinload(Group.persona))
+            .where(Group.is_active == True)  # noqa: E712
+        )
+        groups = result.scalars().all()
+
+    for group in groups:
+        persona = group.persona
+        if persona is None or not persona.auto_message_enabled:
+            continue
+        try:
+            async with AsyncSessionLocal() as session:
+                silent = await get_silent_members(session, group.id, hours_threshold=48)
+
+            if not silent:
+                continue
+
+            # Pick one silent member to mention (don't spam)
+            member = random.choice(silent)
+            hint = (
+                f"{member.sender_name} bir neçə gündür yazılmayıb. "
+                f"Onu qısa, təbii şəkildə xatırla — zarafatla, narahat olmadan. "
+                f"Sanki dostun haqqında düşündün."
+            )
+            reply = await generate_reply(
+                persona,
+                context_messages=[{"role": "user", "content": hint}],
+                max_tokens=100,
+            )
+            if reply:
+                await application.bot.send_message(
+                    chat_id=group.telegram_id, text=reply
+                )
+                logger.info(
+                    "Silent member mention: %s in group %d",
+                    member.sender_name, group.telegram_id,
+                )
+        except Exception as e:
+            logger.warning("Silent member check failed for group %d: %s", group.telegram_id, e)
+
+
 def build_scheduler(application) -> AsyncIOScheduler:
     """
     Create and configure the AsyncIOScheduler.
-
-    Interval is randomized per-run: each job execution schedules the next
-    trigger at a random point within [interval_min, interval_max] minutes.
-    We achieve this by using a fixed short-interval trigger (1 min) and
-    tracking state via a simple approach: use interval trigger with jitter.
-
-    Simpler approach: use interval trigger with the minimum interval and
-    add jitter equal to (max - min) minutes.
     """
     scheduler = AsyncIOScheduler()
 
-    # Default interval: 45 min base + up to 135 min jitter = 45–180 min range
-    # These are the defaults; per-group intervals are read at job execution time
-    # from the Persona record so they are always up-to-date.
     scheduler.add_job(
         send_auto_message,
         trigger="interval",
         minutes=45,
-        jitter=135 * 60,  # jitter in seconds: up to 135 extra minutes
+        jitter=135 * 60,
         args=[application],
         id="auto_message",
         name="Auto message job",
@@ -207,6 +327,43 @@ def build_scheduler(application) -> AsyncIOScheduler:
         args=[application],
         id="update_memory",
         name="Group memory update",
+        replace_existing=True,
+    )
+
+    # Weekly digest — every Sunday at 10:00 AM Baku time (UTC+4 = 06:00 UTC)
+    scheduler.add_job(
+        send_weekly_digest,
+        trigger="cron",
+        day_of_week="sun",
+        hour=6,
+        minute=0,
+        args=[application],
+        id="weekly_digest",
+        name="Weekly group digest",
+        replace_existing=True,
+    )
+
+    # Birthday greetings — every day at 09:00 AM Baku time (05:00 UTC)
+    scheduler.add_job(
+        check_birthdays,
+        trigger="cron",
+        hour=5,
+        minute=0,
+        args=[application],
+        id="birthday_check",
+        name="Birthday check",
+        replace_existing=True,
+    )
+
+    # Silent member check — every 12 hours
+    scheduler.add_job(
+        check_silent_members,
+        trigger="interval",
+        hours=12,
+        jitter=1800,
+        args=[application],
+        id="silent_members",
+        name="Silent member check",
         replace_existing=True,
     )
 

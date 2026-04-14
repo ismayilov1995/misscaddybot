@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from bot.models import Group, Message, Persona
+from bot.models import Group, Message, Persona, MemberProfile
 
 logger = logging.getLogger(__name__)
 
@@ -509,6 +509,14 @@ async def handle_message(
             sent_at,
         )
 
+    # ── Track member activity (async, non-blocking) ──
+    from bot.member_profiles import update_member_activity
+    asyncio.create_task(
+        update_member_activity(
+            group.id, sender_id, sender_name, sender_username, message.text, sent_at
+        )
+    )
+
     # ── Passive emoji reaction (on ANY message, not just mentions) ──
     from bot.reactions import maybe_react
     asyncio.create_task(
@@ -632,3 +640,187 @@ async def handle_bot_added(
         await session.commit()
 
     logger.info("Auto-seeded group '%s' (%d) with persona '%s'", title, chat_id, DEFAULT_NAME)
+
+    # Welcome the group as the new persona
+    asyncio.create_task(_send_welcome_message(context, chat_id, DEFAULT_NAME))
+
+
+async def _send_welcome_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    persona_name: str,
+) -> None:
+    """Send a casual intro message when the bot joins a new group."""
+    import random
+    await asyncio.sleep(random.uniform(3, 8))
+    greetings = [
+        f"Salam hamıya! {persona_name} burada 👋",
+        f"Hə, gəldim 😄 Salam!",
+        f"Salamlar! Mən {persona_name}yəm, indi buradadır 🙂",
+        f"Hə hə, mən də varım artıq 😄",
+    ]
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=random.choice(greetings),
+        )
+    except Exception as e:
+        logger.warning("Welcome message failed for chat %d: %s", chat_id, e)
+
+
+async def handle_new_member(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Fires when a new member joins the group.
+    Bot greets them in persona style.
+    Registered for: filters.StatusUpdate.NEW_CHAT_MEMBERS
+    """
+    from bot.database import AsyncSessionLocal
+
+    message = update.effective_message
+    if message is None:
+        return
+
+    chat_id = message.chat_id
+
+    async with AsyncSessionLocal() as session:
+        result = await get_group_with_persona(session, chat_id)
+        if result is None:
+            return
+        group, persona = result
+
+    new_members = message.new_chat_members or []
+    for member in new_members:
+        if member.is_bot:
+            continue  # don't greet other bots
+
+        member_name = member.first_name or "Dostum"
+        asyncio.create_task(
+            _greet_new_member(context, chat_id, member_name, persona)
+        )
+
+
+async def _greet_new_member(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    member_name: str,
+    persona: Persona,
+) -> None:
+    """Generate a persona-style greeting for the new member."""
+    from bot.ai import generate_reply
+    from bot.humanize import adjust_max_tokens
+    import random
+
+    await asyncio.sleep(random.uniform(2, 6))
+
+    hint = (
+        f"Qrupa '{member_name}' adlı yeni bir nəfər qoşuldu. "
+        f"Onu qısa, mehriban, təbii şəkildə qarşıla — qrupun öz tərzi ilə. "
+        f"Rəsmi dil yox, sanki tanış birinin dostunu qarşılayırsan. "
+        f"1-2 cümlə kifayətdir."
+    )
+
+    reply = await generate_reply(
+        persona,
+        context_messages=[{"role": "user", "content": hint}],
+        max_tokens=100,
+    )
+
+    if reply:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=reply)
+            logger.info("Greeted new member '%s' in chat %d", member_name, chat_id)
+        except Exception as e:
+            logger.warning("New member greeting failed: %s", e)
+
+
+async def handle_photo(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Fires when a photo is sent to the group.
+    Bot looks at the image and reacts like a real person would.
+    Registered for: filters.PHOTO & filters.ChatType.GROUPS
+    """
+    from bot.database import AsyncSessionLocal
+    from bot.vision import should_react_to_photo, describe_and_reply
+
+    message = update.effective_message
+    if message is None or not message.photo:
+        return
+
+    chat_id = message.chat_id
+
+    async with AsyncSessionLocal() as session:
+        result = await get_group_with_persona(session, chat_id)
+        if result is None:
+            return
+        group, persona = result
+
+        if not should_react_to_photo():
+            return
+
+        context_messages = await get_context_messages(
+            session, group.id, limit=6
+        )
+
+    sender_name = "Biri"
+    if message.from_user:
+        sender_name = message.from_user.first_name or "Biri"
+
+    # Get the largest photo size
+    photo = message.photo[-1]
+    tg_file = await context.bot.get_file(photo.file_id)
+    photo_url = tg_file.file_path
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(photo_url)
+            photo_bytes = resp.content
+    except Exception as e:
+        logger.warning("Could not download photo: %s", e)
+        return
+
+    caption = message.caption
+
+    reply = await describe_and_reply(
+        photo_bytes=photo_bytes,
+        persona_name=persona.name,
+        persona_bio=persona.bio,
+        persona_personality=persona.personality,
+        sender_name=sender_name,
+        caption=caption,
+        recent_context=context_messages,
+    )
+
+    if not reply:
+        return
+
+    await asyncio.sleep(random.uniform(2, 5))
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    await asyncio.sleep(random.uniform(1, 3))
+
+    try:
+        sent_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=reply,
+            reply_to_message_id=message.message_id,
+        )
+        async with AsyncSessionLocal() as session:
+            await save_message(
+                session,
+                group_id=group.id,
+                telegram_message_id=sent_msg.message_id,
+                sender_id=context.bot.id,
+                sender_name=persona.name,
+                sender_username=context.bot.username,
+                text=reply,
+                is_bot=True,
+                replied_to_id=message.message_id,
+                sent_at=sent_msg.date,
+            )
+        logger.info("Photo reaction sent in group %d", group.telegram_id)
+    except Exception as e:
+        logger.warning("Photo reply send failed: %s", e)
