@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -10,6 +11,32 @@ from sqlalchemy.orm import selectinload
 from bot.models import Group, Persona
 
 logger = logging.getLogger(__name__)
+
+# In-memory dedup cache: group_id -> list of (monotonic_time, text) tuples.
+# Prevents sending the same auto-message even if it varies slightly across runs.
+_sent_cache: dict[int, list[tuple[float, str]]] = {}
+_SENT_CACHE_TTL = 4 * 3600  # 4 hours
+
+
+def _normalize(text: str) -> str:
+    """Collapse whitespace for comparison."""
+    return " ".join(text.split()).lower()
+
+
+def _was_recently_sent(group_id: int, text: str) -> bool:
+    now = time.monotonic()
+    entries = _sent_cache.get(group_id, [])
+    # Evict old entries
+    entries = [(t, txt) for t, txt in entries if now - t < _SENT_CACHE_TTL]
+    _sent_cache[group_id] = entries
+    needle = _normalize(text)
+    return any(_normalize(txt) == needle for _, txt in entries)
+
+
+def _record_sent(group_id: int, text: str) -> None:
+    if group_id not in _sent_cache:
+        _sent_cache[group_id] = []
+    _sent_cache[group_id].append((time.monotonic(), text))
 
 
 async def send_auto_message(application) -> None:
@@ -61,14 +88,14 @@ async def send_auto_message(application) -> None:
                     session, group.id, persona.context_window,
                 )
 
-                # Fetch last bot message to detect duplicates later
+                # Fetch recent bot messages for DB-side dedup (last 5)
                 last_bot_result = await session.execute(
                     select(_Message.text)
                     .where(_Message.group_id == group.id, _Message.is_bot == True)  # noqa: E712
                     .order_by(_Message.sent_at.desc())
-                    .limit(1)
+                    .limit(5)
                 )
-                last_bot_text = last_bot_result.scalar_one_or_none()
+                recent_bot_texts = last_bot_result.scalars().all()
 
             # 20% chance: conversation starter — longer, topic-opening message
             is_conversation_starter = random.random() < 0.20
@@ -93,10 +120,18 @@ async def send_auto_message(application) -> None:
                 logger.warning("Auto-message skipped for group %d — Claude returned None", group.telegram_id)
                 continue
 
-            # Deduplication: skip if identical to last bot message
-            if last_bot_text and last_bot_text.strip() == reply.strip():
+            # Deduplication — two layers:
+            # 1. In-memory cache (survives across scheduler ticks, handles minor AI variations)
+            # 2. DB check against last 5 bot messages (survives restarts)
+            if _was_recently_sent(group.id, reply):
                 logger.info(
-                    "Auto-message skipped for group %d — duplicate of last bot message", group.telegram_id
+                    "Auto-message skipped for group %d — in-memory dedup hit", group.telegram_id
+                )
+                continue
+            reply_norm = _normalize(reply)
+            if any(_normalize(t) == reply_norm for t in recent_bot_texts):
+                logger.info(
+                    "Auto-message skipped for group %d — DB dedup hit", group.telegram_id
                 )
                 continue
 
@@ -118,6 +153,7 @@ async def send_auto_message(application) -> None:
                     sent_at=sent_msg.date,
                 )
 
+            _record_sent(group.id, reply)
             logger.info("Auto-message sent to group %d", group.telegram_id)
             asyncio.create_task(maybe_generate_summary(group.id, group.telegram_id))
 
