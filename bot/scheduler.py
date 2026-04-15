@@ -32,6 +32,13 @@ async def send_auto_message(application) -> None:
         )
         groups = result.scalars().all()
 
+    # Skip auto-messages during quiet hours (00:00–06:59 Baku time)
+    from datetime import datetime, timezone, timedelta
+    baku_hour = datetime.now(timezone(timedelta(hours=4))).hour
+    if 0 <= baku_hour <= 6:
+        logger.info("Auto-message skipped — quiet hours in Baku (%02d:00)", baku_hour)
+        return
+
     for group in groups:
         persona = group.persona
         if persona is None or not persona.auto_message_enabled:
@@ -40,12 +47,22 @@ async def send_auto_message(application) -> None:
         try:
             async with AsyncSessionLocal() as session:
                 from bot.summary import get_summary_context, maybe_generate_summary
+                from bot.models import Message as _Message
 
                 summary_context = await get_summary_context(session, group.id)
 
                 context_messages = await get_context_messages(
                     session, group.id, persona.context_window,
                 )
+
+                # Fetch last bot message to detect duplicates later
+                last_bot_result = await session.execute(
+                    select(_Message.text)
+                    .where(_Message.group_id == group.id, _Message.is_bot == True)  # noqa: E712
+                    .order_by(_Message.sent_at.desc())
+                    .limit(1)
+                )
+                last_bot_text = last_bot_result.scalar_one_or_none()
 
             # 20% chance: conversation starter — longer, topic-opening message
             is_conversation_starter = random.random() < 0.20
@@ -68,6 +85,13 @@ async def send_auto_message(application) -> None:
 
             if reply is None:
                 logger.warning("Auto-message skipped for group %d — Claude returned None", group.telegram_id)
+                continue
+
+            # Deduplication: skip if identical to last bot message
+            if last_bot_text and last_bot_text.strip() == reply.strip():
+                logger.info(
+                    "Auto-message skipped for group %d — duplicate of last bot message", group.telegram_id
+                )
                 continue
 
             sent_msg = await application.bot.send_message(
