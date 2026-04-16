@@ -6,17 +6,22 @@ Generates MP3 audio suitable for Telegram voice messages.
 Uses OpenAI's neural TTS which handles mixed Azerbaijani/English/technical
 text naturally — code-switching (az + en terms) sounds human, not robotic.
 
-Voice is auto-selected based on persona gender:
-  [Qadın] bio → nova  (warm, natural female)
-  [Kişi]  bio → onyx  (deep, confident male)
+Voice is auto-selected based on persona gender AND language:
+  Female + az → shimmer  (soft, expressive — best for az/en mix)
+  Female + ru → nova     (warm, natural for Russian)
+  Female + en → nova     (standard English female)
+  Male   + az → fable    (expressive, storytelling quality)
+  Male   + ru → onyx     (deep, authoritative for Russian)
+  Male   + en → onyx     (standard English male)
   Override with TTS_VOICE env var.
 
-Speed is slightly randomized per message for natural variation.
+Speed is slightly randomized per message (0.88–0.98 — slightly slower for
+a warmer, more natural feel).
 
 Falls back to Edge TTS if OpenAI call fails.
 
 Env vars:
-  TTS_VOICE    — Override voice name. Default: auto-detect from persona gender
+  TTS_VOICE    — Override voice name. Default: auto-detect from gender+language
   VOICE_CHANCE — Probability of sending voice (0.0–1.0). Default: 0.08
 """
 
@@ -29,13 +34,23 @@ logger = logging.getLogger(__name__)
 
 VOICE_CHANCE = float(os.getenv("VOICE_CHANCE", "0.08"))
 
-# OpenAI voice names
-_VOICE_FEMALE = "nova"   # warm, natural
-_VOICE_MALE = "onyx"     # deep, confident
+# Voice matrix: (gender, language) → OpenAI voice name
+# shimmer: soft, breathy, expressive — best for az/en mix, sounds most natural
+# nova: warm, clear — solid for ru/en
+# fable: storytelling, expressive — best male for az
+# onyx: deep, confident — classic male for ru/en
+_VOICE_MAP: dict[tuple[str, str], str] = {
+    ("female", "az"): "shimmer",
+    ("female", "ru"): "nova",
+    ("female", "en"): "nova",
+    ("male",   "az"): "fable",
+    ("male",   "ru"): "onyx",
+    ("male",   "en"): "onyx",
+}
 
 # Edge TTS fallback voices
 _EDGE_FEMALE = "az-AZ-BanuNeural"
-_EDGE_MALE = "az-AZ-BabekNeural"
+_EDGE_MALE   = "az-AZ-BabekNeural"
 
 
 def should_send_voice(persona_voice_chance: int | None = None) -> bool:
@@ -50,44 +65,54 @@ def should_send_voice(persona_voice_chance: int | None = None) -> bool:
     return random.random() < VOICE_CHANCE
 
 
-def _pick_voice(persona_bio: str = "") -> str:
+def _pick_voice(persona_bio: str = "", persona_language: str = "az") -> str:
     """
-    Pick OpenAI TTS voice based on persona gender.
+    Pick OpenAI TTS voice based on persona gender and language.
 
-    Checks for [Kişi] or [Qadın] prefix in bio (set by dashboard).
-    Falls back to TTS_VOICE env var, then female default.
+    Gender detected from [Kişi] / [Qadın] prefix in bio (set by dashboard).
+    Language from persona.language field ("az", "ru", "en").
+    TTS_VOICE env var overrides everything.
     """
     override = os.getenv("TTS_VOICE")
     if override:
         return override
 
-    bio_lower = persona_bio.lower()
-    if bio_lower.startswith("[kişi]") or bio_lower.startswith("[kisi]"):
-        return _VOICE_MALE
+    bio_lower = (persona_bio or "").lower()
+    gender = (
+        "male"
+        if bio_lower.startswith("[kişi]") or bio_lower.startswith("[kisi]")
+        else "female"
+    )
+    lang = persona_language or "az"
+    if lang not in ("az", "ru", "en"):
+        lang = "az"
 
-    # Default: female (covers [Qadın] and unset)
-    return _VOICE_FEMALE
+    return _VOICE_MAP.get((gender, lang), "shimmer")
 
 
 def _pick_edge_voice(persona_bio: str = "") -> str:
     """Pick Edge TTS fallback voice based on persona gender."""
-    bio_lower = persona_bio.lower()
+    bio_lower = (persona_bio or "").lower()
     if bio_lower.startswith("[kişi]") or bio_lower.startswith("[kisi]"):
         return _EDGE_MALE
     return _EDGE_FEMALE
 
 
-async def text_to_voice(text: str, persona_bio: str = "") -> io.BytesIO | None:
+async def text_to_voice(
+    text: str,
+    persona_bio: str = "",
+    persona_language: str = "az",
+) -> io.BytesIO | None:
     """
     Convert text to audio using OpenAI TTS (tts-1-hd).
 
     Falls back to Edge TTS if OpenAI fails.
     Returns a BytesIO buffer ready for Telegram send_voice, or None on error.
-    Speed is slightly randomized per call for natural feel.
+    Speed 0.88–0.98: slightly slower than real-time for a warmer, natural tone.
     """
-    voice = _pick_voice(persona_bio)
-    # Subtle speed variation: slightly slower or faster each time
-    speed = round(random.uniform(0.92, 1.08), 2)
+    voice = _pick_voice(persona_bio, persona_language)
+    # Slightly slower speed → warmer, more natural/sexy feel
+    speed = round(random.uniform(0.88, 0.98), 2)
 
     try:
         from openai import AsyncOpenAI
@@ -104,7 +129,10 @@ async def text_to_voice(text: str, persona_bio: str = "") -> io.BytesIO | None:
         buffer = io.BytesIO(response.content)
         buffer.name = "voice.mp3"
         buffer.seek(0)
-        logger.debug("OpenAI TTS: voice=%s speed=%.2f len=%d", voice, speed, len(response.content))
+        logger.debug(
+            "OpenAI TTS: voice=%s lang=%s speed=%.2f len=%d",
+            voice, persona_language, speed, len(response.content),
+        )
         return buffer
 
     except Exception as e:

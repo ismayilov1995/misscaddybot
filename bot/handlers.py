@@ -115,6 +115,19 @@ def is_mentioned(
     return False
 
 
+def _format_time_gap(seconds: float) -> str:
+    """Human-readable Azerbaijani time gap string."""
+    minutes = int(seconds / 60)
+    hours = int(seconds / 3600)
+    days = int(seconds / 86400)
+    if days >= 1:
+        return f"{days} gün fasilə"
+    elif hours >= 1:
+        return f"{hours} saat fasilə"
+    else:
+        return f"{minutes} dəqiqə fasilə"
+
+
 async def get_context_messages(
     session: AsyncSession,
     group_id: int,
@@ -130,7 +143,12 @@ async def get_context_messages(
     Returns messages in chronological order (oldest first).
     is_bot=True  → {"role": "assistant", "content": text}
     is_bot=False → {"role": "user", "content": "{sender_name}: {text}"}
+
+    Time gaps ≥ 30 minutes are injected as separator markers so the AI
+    understands that some messages are from hours or days ago.
     """
+    from datetime import timezone as _tz
+
     query = select(Message).where(Message.group_id == group_id)
     if after_message_id is not None:
         query = query.where(Message.id > after_message_id)
@@ -139,14 +157,38 @@ async def get_context_messages(
     )
     rows = list(reversed(result.scalars().all()))
     messages = []
+    prev_sent_at = None
+
     for row in rows:
         role = "assistant" if row.is_bot else "user"
         content = row.text if row.is_bot else f"{row.sender_name}: {row.text}"
+
+        # Inject time-gap marker when there is a significant pause
+        if prev_sent_at is not None:
+            # Normalize both to UTC for safe comparison
+            curr = row.sent_at
+            prev = prev_sent_at
+            if curr.tzinfo is None:
+                curr = curr.replace(tzinfo=_tz.utc)
+            if prev.tzinfo is None:
+                prev = prev.replace(tzinfo=_tz.utc)
+            gap_seconds = (curr - prev).total_seconds()
+            if gap_seconds >= 1800:  # 30 minutes
+                marker = f"[─── {_format_time_gap(gap_seconds)} ───]"
+                # Inject as a user message so both providers accept it
+                if messages and messages[-1]["role"] == "user":
+                    messages[-1]["content"] += f"\n{marker}"
+                else:
+                    messages.append({"role": "user", "content": marker})
+
+        prev_sent_at = row.sent_at
+
         # Merge consecutive same-role messages (required by Anthropic)
         if messages and messages[-1]["role"] == role:
             messages[-1]["content"] += f"\n{content}"
         else:
             messages.append({"role": role, "content": content})
+
     return messages
 
 
@@ -260,7 +302,11 @@ async def reply_to_mention(
             await context.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.RECORD_VOICE
             )
-            voice_buf = await text_to_voice(reply, persona_bio=persona.bio)
+            voice_buf = await text_to_voice(
+                reply,
+                persona_bio=persona.bio,
+                persona_language=getattr(persona, "language", "az") or "az",
+            )
         else:
             voice_buf = None
 
